@@ -148,6 +148,7 @@ buildNumber.properties
 # Graphalytics
 config/
 
+.vscode
 # dependencies
 /GraphBLAS/
 /LAGraph/
