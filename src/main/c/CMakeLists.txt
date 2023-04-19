@@ -7,6 +7,10 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_C_STANDARD 11)
 
+#add cuda support
+set(CMAKE_CUDA_COMPILER /usr/local/cuda-12/bin/nvcc)
+enable_language(CUDA)
+
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "7.0.0")
     message(FATAL_ERROR "Insufficient gcc version")
@@ -35,7 +39,8 @@ link_libraries(graphblas_utils)
 target_link_libraries(graphblas_utils graphblas lagraph lagraphx)
 
 add_executable(bfs src/algorithms/bfs.cpp)
-add_executable(cdlp src/algorithms/cdlp.cpp)
+#add_executable(cdlp src/algorithms/cdlp.cpp)
+add_executable(cdlp src/algorithms/cdlp.cu)
 add_executable(lcc src/algorithms/lcc.cpp)
 add_executable(pr src/algorithms/pr.cpp)
 add_executable(sssp src/algorithms/sssp.cpp)
