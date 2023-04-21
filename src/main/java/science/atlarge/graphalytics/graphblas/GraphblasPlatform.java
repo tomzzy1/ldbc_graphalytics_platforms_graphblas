@@ -142,12 +142,14 @@ public class GraphblasPlatform implements Platform {
 
 	@Override
 	public BenchmarkMetrics finalize(RunSpecification runSpecification) throws Exception {
+		LOG.info("Starting to collect metrics");
 		GraphblasCollector.stopPlatformLogging();
 		BenchmarkRunSetup benchmarkRunSetup = runSpecification.getBenchmarkRunSetup();
 		Path logDir = benchmarkRunSetup.getLogDir().resolve("platform");
-
+		LOG.info("Collecting metrics from " + logDir.toString());
 		BenchmarkMetrics metrics = new BenchmarkMetrics();
 		metrics.setProcessingTime(GraphblasCollector.collectProcessingTime(logDir));
+		LOG.info("Collected metrics for " + runSpecification.getBenchmarkRun().getName());
 		return metrics;
 	}
 

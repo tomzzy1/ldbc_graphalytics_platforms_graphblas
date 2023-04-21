@@ -11,6 +11,8 @@
 #include "graphio.h"
 #include "computation_timer.hpp"
 
+#include "cdlp_cuda.cuh"
+
 /*
  * Result serializer function
  */
@@ -58,6 +60,10 @@ GrB_Vector LA_CDLP(GrB_Matrix A, bool symmetric, int itermax) {
 }
 
 int main(int argc, char **argv) {
+
+    // test basic cuda device query
+    CUDA_CDLP::test_cuda_device_query();
+
     BenchmarkParameters parameters = ParseBenchmarkParameters(argc, argv);
 
     LAGraph_Init(NULL);

@@ -107,3 +107,18 @@ bin/sh/build-wrapper-only.sh
 The workflow of the GraphBLAS implementation is illustrated in the following figure. Note that the "raw graph files" and the "configuration" are provided by the user, while the rest of the data artifacts (intermediate data sets, outputs, etc.) are created automatically by the framework.
 
 ![Workflow of the GraphBLAS implementation](workflow.png)
+
+### Benchmark with CUDA
+
+Re-init the benchmark framework:
+```
+scripts/init-for-testing.sh /cuda-graph-analytics/example-data-sets/graphs /cuda-graph-analytics/example-data-sets/matrices 
+```
+After you modify the code and want to test it:
+```
+scripts/update-src-c.sh
+```
+The previous command only copy paste the CXX code into folder `graphalytics-1.10.0-graphblas-0.1.0-SNAPSHOT` and build it. If you want to directly run the benchmark, you can do:
+```
+scripts/update-run-src-c.sh
+```
