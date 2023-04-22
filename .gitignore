@@ -152,16 +152,6 @@ config/
 # dependencies
 /GraphBLAS/
 /LAGraph/
-bin/sh/build-wrapper-only.sh
-bin/sh/compile-benchmark.sh
-bin/sh/execute-job.sh
-bin/sh/install-dependencies.sh
-bin/sh/install-graphblas.sh
-bin/sh/install-lagraph.sh
-bin/sh/install-prerequisites.sh
-bin/sh/link-matrix-market-graphs.sh
-bin/sh/load-graph.sh
-bin/sh/prepare-benchmark.sh
-bin/sh/run-benchmark.sh
-bin/sh/terminate-job.sh
-bin/sh/unload-graph.sh
+
+bin/sh/
+scripts/
