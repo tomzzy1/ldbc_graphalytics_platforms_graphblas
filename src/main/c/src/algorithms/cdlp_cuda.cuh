@@ -10,7 +10,7 @@ int test_cuda_device_query();
 
 int LAGraph_cdlp_gpu(
     GrB_Vector *CDLP_handle, // output vector
-    const GrB_Matrix A,      // input matrix
+    GrB_Matrix A,      // input matrix
     bool symmetric,          // denote whether the matrix is symmetric
     bool sanitize,           // if true, ensure A is binary
     int itermax,             // max number of iterations,
