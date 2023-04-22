@@ -13,6 +13,9 @@
 
 #include "cdlp_cuda.cuh"
 
+#define USE_GPU_CDLP 1
+
+
 /*
  * Result serializer function
  */
@@ -54,7 +57,11 @@ GrB_Vector LA_CDLP(GrB_Matrix A, bool symmetric, int itermax) {
     ComputationTimer timer{"CDLP"};
     double timing[2];
     char msg[LAGRAPH_MSG_LEN];
-    LAGraph_cdlp(&l, A, symmetric, true, itermax, timing, msg);
+#if USE_GPU_CDLP!=0
+    CUDA_CDLP::LAGraph_cdlp_gpu(&l, A, symmetric, false, itermax, timing);
+#else
+    LAGraph_cdlp(&l, A, symmetric, false, itermax, timing, msg);
+#endif
 
     return l;
 }
@@ -62,7 +69,7 @@ GrB_Vector LA_CDLP(GrB_Matrix A, bool symmetric, int itermax) {
 int main(int argc, char **argv) {
 
     // test basic cuda device query
-    CUDA_CDLP::test_cuda_device_query();
+    // CUDA_CDLP::test_cuda_device_query();
 
     BenchmarkParameters parameters = ParseBenchmarkParameters(argc, argv);
 

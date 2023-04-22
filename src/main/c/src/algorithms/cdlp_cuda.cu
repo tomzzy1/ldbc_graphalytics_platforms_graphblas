@@ -5,6 +5,7 @@
 
 #define PRINT(...) LOG(info, std::string(fmt::format(__VA_ARGS__)))
 
+
 namespace CUDA_CDLP {
 
 int test_cuda_device_query(){
@@ -56,8 +57,40 @@ int test_cuda_device_query(){
     return 0;
 }
 
-void gpu_cdlp_wrapper(){
-    return;
+int LAGraph_cdlp_gpu(
+    GrB_Vector *CDLP_handle, // output vector
+    const GrB_Matrix A,      // input matrix
+    bool symmetric,          // denote whether the matrix is symmetric
+    bool sanitize,           // if true, ensure A is binary
+    int itermax,             // max number of iterations,
+    double *t                // t [0] = sanitize time, t [1] = cdlp time, in seconds
+){
+    // check input
+    if (CDLP_handle == NULL || t == NULL)
+    {
+        return GrB_NULL_POINTER;
+    }
+    // set timing to zero
+    t [0] = 0;         // sanitize time
+    t [1] = 0;         // CDLP time
+
+    // check input matrix
+    GrB_Index n, nz, nnz;
+    GrB_Matrix_nrows(&n, A);
+    GrB_Matrix_nvals(&nz, A);
+    if (!symmetric){
+        nnz = 2 * nz;
+    }else{
+        nnz = nz;
+    }
+    PRINT("nnz value is {}", nnz);
+    
+    GrB_Matrix AT = NULL;
+    GrB_Matrix_new (&AT, GrB_UINT64, n, n);
+    GrB_transpose (AT, NULL, NULL, A, NULL);
+
+    return GrB_SUCCESS;
 }
+
 
 }

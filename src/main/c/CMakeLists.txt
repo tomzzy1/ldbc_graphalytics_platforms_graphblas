@@ -12,6 +12,8 @@ set(VERBOSE_BUILD ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_C_STANDARD 11)
 
+# set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -std=c11 -lm -Wno-pragmas " )
+
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
@@ -20,10 +22,10 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   endif()
 endif()
 
-if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-  link_directories(/usr/local/lib)
+# if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+#   link_directories(/usr/local/lib)
 
-endif()
+# endif()
 
 
 find_package(GraphBLAS 7.0.1 REQUIRED MODULE)
