@@ -153,5 +153,5 @@ config/
 /GraphBLAS/
 /LAGraph/
 
-bin/sh/
-scripts/
+# bin/sh/
+# scripts/
