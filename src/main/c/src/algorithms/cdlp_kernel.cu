@@ -36,15 +36,15 @@ __global__ void cdlp_base(
                     
                     // 1.1 If is a directed graph
                     GrB_Index incr = 1;
-                    if (!symmetric) {
-                        // Find whether the arc is dual
-                        for (GrB_Index i = Ap[desNode]; i < Ap[desNode+1]; i++) {
-                            if (Aj[i] == srcNode) {
-                                incr = 2;
-                                break;
-                            }
-                        }
-                    }
+                    // if (!symmetric) {
+                    //     // Find whether the arc is dual
+                    //     for (GrB_Index i = Ap[desNode]; i < Ap[desNode+1]; i++) {
+                    //         if (Aj[i] == srcNode) {
+                    //             incr = 2;
+                    //             break;
+                    //         }
+                    //     }
+                    // }
 
                     // 1.2 Initalize bin & count label
                     bool isNew = true;
@@ -116,9 +116,12 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
     cudaFree(Aj_k);
     cudaFree(labels_k);
 
+    GrB_Vector CDLP = NULL;
+    GrB_Vector_new(&CDLP, GrB_UINT64, N);
     for (GrB_Index i = 0; i < N; i++) {
-        GrB_Vector_setElement_UINT64(*CDLP_handle, labels[i], i);
+        GrB_Vector_setElement_UINT64(CDLP, labels[i], i);
     }
+    (*CDLP_handle) = CDLP;
 
     cudaFree(labels);
 }
