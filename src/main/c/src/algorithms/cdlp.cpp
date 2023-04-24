@@ -15,18 +15,18 @@
 
 #define USE_GPU_CDLP 1
 
-
 /*
  * Result serializer function
  */
 void SerializeCDLPResult(
     GrB_Vector result,
     const std::vector<GrB_Index> &mapping,
-    const BenchmarkParameters &parameters
-) {
+    const BenchmarkParameters &parameters)
+{
 
     std::ofstream file{parameters.output_file};
-    if (!file.is_open()) {
+    if (!file.is_open())
+    {
         std::cerr << "Output file " << parameters.output_file << " does not exists" << std::endl;
         exit(-1);
     }
@@ -39,10 +39,11 @@ void SerializeCDLPResult(
     OK(GrB_Vector_nvals(&nvals, result))
 
     uint64_t *X = NULL;
-    X = (uint64_t *) malloc(n * sizeof(uint64_t));
+    X = (uint64_t *)malloc(n * sizeof(uint64_t));
     OK(GrB_Vector_extractTuples_UINT64(GrB_NULL, X, &nvals, result));
 
-    for (GrB_Index matrix_index = 0; matrix_index < n; matrix_index++) {
+    for (GrB_Index matrix_index = 0; matrix_index < n; matrix_index++)
+    {
         GrB_Index original_index = mapping[matrix_index];
         file << original_index << " " << mapping[X[matrix_index]] << std::endl;
     }
@@ -50,14 +51,15 @@ void SerializeCDLPResult(
     free(X);
 }
 
-GrB_Vector LA_CDLP(GrB_Matrix A, bool symmetric, int itermax) {
+GrB_Vector LA_CDLP(GrB_Matrix A, bool symmetric, int itermax)
+{
     GrB_Info info;
     GrB_Vector l;
 
     ComputationTimer timer{"CDLP"};
     double timing[2];
     char msg[LAGRAPH_MSG_LEN];
-#if USE_GPU_CDLP!=0
+#if USE_GPU_CDLP != 0
     CUDA_CDLP::LAGraph_cdlp_gpu(&l, A, symmetric, false, itermax, timing);
 #else
     LAGraph_cdlp(&l, A, symmetric, false, itermax, timing, msg);
@@ -66,7 +68,8 @@ GrB_Vector LA_CDLP(GrB_Matrix A, bool symmetric, int itermax) {
     return l;
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
 
     // test basic cuda device query
     // CUDA_CDLP::test_cuda_device_query();
