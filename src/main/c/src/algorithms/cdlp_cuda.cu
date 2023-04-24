@@ -3,10 +3,11 @@
 #include "cdlp_cuda.cuh"
 #include "common/fmt.hpp"
 #include "common/utils.hpp"
+#include "cdlp_kernel.cuh"
 
 #define PRINT(...) LOG(info, std::string(fmt::format(__VA_ARGS__)))
 
-#define DEBUG_PRINT 0
+#define DEBUG_PRINT 1
 
 namespace CUDA_CDLP {
 
@@ -185,6 +186,8 @@ int LAGraph_cdlp_gpu(
     PRINT("{}", str3);
 #endif
 
+    // Call CUDA kernel
+    cdlp_gpu(Ap, Ap_size, Aj, Aj_size, CDLP_handle, n, symmetric, itermax);
 
     // free matrix mem
     free(Ap);

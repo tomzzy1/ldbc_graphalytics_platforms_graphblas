@@ -54,6 +54,8 @@ add_executable(cdlp
     src/algorithms/cdlp.cpp
     src/algorithms/cdlp_cuda.cu
     src/algorithms/cdlp_cuda.cuh
+    src/algorithms/cdlp_kernel.cu
+    src/algorithms/cdlp_kernel.cuh
     src/algorithms/common/catch.hpp
     src/algorithms/common/fmt.hpp
     src/algorithms/common/clara.hpp
