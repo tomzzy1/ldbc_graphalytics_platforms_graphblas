@@ -23,12 +23,17 @@ namespace CUDA_CDLP
     //   an outgoing edge).
     constexpr int Histogram_size = 100;
 
+    __host__ __device__ static inline int ceil_div(int x, int y)
+    {
+        return (x - 1) / y + 1;
+    }
+
     __device__ int is_equal = 1;
 
     __global__ void initialize_label_kernel(uint64_t *Label, uint64_t Label_size)
     {
         int x = blockDim.x * blockIdx.x + threadIdx.x;
-        for (int i = 0; i < Label_size / gridDim.x * blockDim.x; ++i)
+        for (int i = 0; i < ceil_div(Label_size, gridDim.x * blockDim.x); ++i)
         {
             int idx = i * gridDim.x * blockDim.x + x;
             if (idx < Label_size)
@@ -41,7 +46,7 @@ namespace CUDA_CDLP
     __global__ void check_equality_kernel(uint64_t *Label, uint64_t *New_label, uint64_t Label_size)
     {
         int x = blockDim.x * blockIdx.x + threadIdx.x;
-        for (int i = 0; i < Label_size / gridDim.x * blockDim.x; ++i)
+        for (int i = 0; i < ceil_div(Label_size, gridDim.x * blockDim.x); ++i)
         {
             int idx = i * gridDim.x * blockDim.x + x;
             if (idx < Label_size && is_equal)
@@ -58,7 +63,7 @@ namespace CUDA_CDLP
                                           uint64_t Ap_size, uint64_t Aj_size, uint64_t Ax_size, uint64_t Label_size)
     {
         int x = blockDim.x * blockIdx.x + threadIdx.x;
-        for (int i = 0; i < Label_size / gridDim.x * blockDim.x; ++i)
+        for (int i = 0; i < ceil_div(Label_size, gridDim.x * blockDim.x); ++i)
         {
             int idx = i * gridDim.x * blockDim.x + x;
             if (idx < Label_size)
@@ -66,6 +71,7 @@ namespace CUDA_CDLP
                 auto row_start = Ap[idx];
                 auto row_end = Ap[idx + 1];
                 uint64_t histogram[Histogram_size];
+                histogram[Label[idx]]++; // neighbor of self
                 for (int j = row_start; j < row_end; ++j)
                 {
                     histogram[Label[Aj[j]]]++;
@@ -80,6 +86,8 @@ namespace CUDA_CDLP
                         min_label = j;
                     }
                 }
+                New_label[idx] = min_label;
+                printf("threadid %d label %d", idx, min_label);
             }
         }
     }
@@ -310,26 +318,27 @@ namespace CUDA_CDLP
         // initiate cuda memory
 
         uint64_t *Ap_device = nullptr;
-        uint64_t *Aj_device = nullptr; 
-        uint64_t *Ax_device = nullptr; 
-        uint64_t *Label_device = nullptr; 
-        uint64_t *New_label_device = nullptr; 
+        uint64_t *Aj_device = nullptr;
+        uint64_t *Ax_device = nullptr;
+        uint64_t *Label_device = nullptr;
+        uint64_t *New_label_device = nullptr;
         uint64_t *Label_host = nullptr;
 
-        Label_host = (uint64_t*) malloc(sizeof(uint64_t) * n);
-        cudaMalloc((void **)Ap_device, Ap_size);
-        cudaMalloc((void **)Aj_device, Aj_size);
-        cudaMalloc((void **)Ax_device, Ax_size);
-        cudaMalloc((void **)*Label_device, sizeof(uint64_t) * n);
-        cudaMalloc((void **)*New_label_device, sizeof(uint64_t) * n);
-#if 0
+        Label_host = (uint64_t *)malloc(sizeof(uint64_t) * n);
+
+        cudaMalloc((void **)&Ap_device, Ap_size);
+        cudaMalloc((void **)&Aj_device, Aj_size);
+        cudaMalloc((void **)&Ax_device, Ax_size);
+        cudaMalloc((void **)&Label_device, sizeof(uint64_t) * n);
+        cudaMalloc((void **)&New_label_device, sizeof(uint64_t) * n);
+
         cudaMemcpy(Ap_device, Ap, Ap_size, cudaMemcpyHostToDevice);
         cudaMemcpy(Aj_device, Aj, Aj_size, cudaMemcpyHostToDevice);
         cudaMemcpy(Ax_device, Ax, Ax_size, cudaMemcpyHostToDevice);
         PRINT("CUDA Memory Initialization Success");
 
         dim3 dimBlock(512);
-        dim3 dimGrid((n - 1) / dimBlock.x + 1); // change to fix blocks and grids when the graph is huge
+        dim3 dimGrid(ceil_div(n, dimBlock.x)); // change to fix blocks and grids when the graph is huge
         initialize_label_kernel<<<dimGrid, dimBlock>>>(Label_device, n);
         for (int i = 0; i < itermax; ++i)
         {
@@ -350,23 +359,25 @@ namespace CUDA_CDLP
             }
         }
         cudaMemcpy(Label_host, Label_device, sizeof(uint64_t) * n, cudaMemcpyDeviceToHost);
+        GrB_Vector CDLP = nullptr;
+        GrB_Vector_new(&CDLP, GrB_UINT64, n);
         for (int i = 0; i < n; ++i)
         {
-            GrB_Vector_setElement_UINT64(*CDLP_handle, Label_host[i], i);    
+            GrB_Vector_setElement_UINT64(CDLP, Label_host[i], i);
         }
-#endif
+        *CDLP_handle = CDLP;
         // free matrix mem
         cudaFree(Ap_device);
         cudaFree(Aj_device);
         cudaFree(Ax_device);
         cudaFree(Label_device);
         cudaFree(New_label_device);
+
         free(Label_host);
 
         free(Ap);
         free(Aj);
         free(Ax);
-
 
         return GrB_SUCCESS;
     }
