@@ -1,10 +1,11 @@
 #include "cdlp_kernel.cuh"
 #include <iostream>
 
-#define PRINT(...) LOG(info, std::string(fmt::format(__VA_ARGS__)))
+#define optimized1 1
 
 constexpr int GRID_DIM = 1;
 constexpr int BLOCK_DIM = 1024;
+constexpr int LOCAL_BIN_SIZE = 1;
 
 __host__ __device__ static inline int ceil_div(int x, int y)
 {
@@ -132,6 +133,154 @@ __global__ void cdlp_base(
     }
 }
 
+__global__ void cdlp_optimized1(
+    GrB_Index *Ap, // Row pointers
+    GrB_Index Ap_size,
+    GrB_Index *Aj,         // Column indices
+    GrB_Index *labels,     // Labels for each node
+    GrB_Index *new_labels, // new labels after each iteration
+    GrB_Index N,           // Number of nodes
+    bool symmetric,        // Is the matrix symmetric (aka is the graph undirected)
+    GrB_Index *bin_count, GrB_Index *bin_label, int *bin_index)
+{
+    GrB_Index ti = blockDim.x * blockIdx.x + threadIdx.x;
+    // Iterate until converge or reaching maximum number
+    // Loop through all nodes
+    for (GrB_Index srcNode = ti; srcNode < N; srcNode += BLOCK_DIM)
+    {
+        if (srcNode < N)
+        {
+            GrB_Index local_bin_count[LOCAL_BIN_SIZE];
+            GrB_Index local_bin_label[LOCAL_BIN_SIZE];
+            // 1. Count neighbors' labels
+            GrB_Index j_base = Ap[srcNode];
+            GrB_Index j_max = Ap[srcNode + 1];
+            auto neighbor_n = j_max - j_base;
+            auto local_n = min(static_cast<unsigned long>(LOCAL_BIN_SIZE), static_cast<unsigned long>(neighbor_n));
+            GrB_Index bin_base;
+            for (GrB_Index j = 0; j < local_n; j++)
+            {
+                GrB_Index desNode = Aj[j + j_base];
+                GrB_Index label = labels[desNode]; // Label of destination node
+
+                // 1.1 If is a directed graph
+                GrB_Index incr = 1;
+
+                // 1.2 Initalize bin & count label
+                bool isNew = true;
+                // Whether the label is presented in bin
+                for (GrB_Index b = 0; b < j; b++)
+                {
+                    if (local_bin_label[b] == label)
+                    {
+                        local_bin_count[b] += incr;
+                        isNew = false;
+                        break;
+                    }
+                }
+                if (isNew)
+                {
+                    local_bin_label[j] = label;
+                    local_bin_count[j] = incr;
+                }
+                else
+                {
+                    local_bin_label[j] = (GrB_Index)-1;
+                    local_bin_count[j] = (GrB_Index)0;
+                }
+            }
+            if (neighbor_n > LOCAL_BIN_SIZE)
+            {
+                // For next optimization, parallelize this part if neighbor_n >> LOCAL_BIN_SIZE
+                bin_base = atomicAdd(bin_index, neighbor_n - LOCAL_BIN_SIZE); // allocate space in the global bin
+                for (GrB_Index j = 0; j < neighbor_n - LOCAL_BIN_SIZE; j++)
+                {
+                    GrB_Index desNode = Aj[j + LOCAL_BIN_SIZE + j_base];
+                    GrB_Index label = labels[desNode]; // Label of destination node
+
+                    // 1.1 If is a directed graph
+                    GrB_Index incr = 1;
+
+                    // 1.2 Initalize bin & count label
+                    bool isNew = true;
+                    // Whether the label is presented in local bin
+                    for (GrB_Index b = 0; b < LOCAL_BIN_SIZE; b++)
+                    {
+                        if (local_bin_label[b] == label)
+                        {
+                            local_bin_count[b] += incr;
+                            isNew = false;
+                            break;
+                        }
+                    }
+                    if (isNew)
+                    {
+                        for (GrB_Index b = bin_base; b < bin_base + j; b++)
+                        {
+                            if (bin_label[b] == label)
+                            {
+                                bin_count[b] += incr;
+                                isNew = false;
+                                break;
+                            }
+                        }
+                        auto b = bin_base + j;
+                        if (isNew)
+                        {
+                            bin_label[b] = label;
+                            bin_count[b] = incr;
+                        }
+                        else
+                        {
+                            bin_label[b] = (GrB_Index)-1;
+                            bin_count[b] = (GrB_Index)0;
+                        }
+                    }
+                }
+            }
+
+            // 2. Find label with maximum frequence
+            GrB_Index max_count = (GrB_Index)0;
+            GrB_Index min_label = (GrB_Index)-1;
+            for (GrB_Index j = 0; j < local_n; j++)
+            {
+                if (max_count < local_bin_count[j])
+                {
+                    max_count = local_bin_count[j];
+                    min_label = local_bin_label[j];
+                }
+                else if (max_count == local_bin_count[j] && min_label > local_bin_label[j] && local_bin_label[j] != (GrB_Index)-1)
+                {
+                    min_label = local_bin_label[j];
+                }
+            }
+            if (neighbor_n > LOCAL_BIN_SIZE)
+            {
+                for (GrB_Index j = bin_base; j < bin_base + neighbor_n - LOCAL_BIN_SIZE; j++)
+                {
+                    if (max_count < bin_count[j])
+                    {
+                        max_count = bin_count[j];
+                        min_label = bin_label[j];
+                    }
+                    else if (max_count == bin_count[j] && min_label > bin_label[j] && bin_label[j] != (GrB_Index)-1)
+                    {
+                        min_label = bin_label[j];
+                    }
+                }
+            }
+
+            // 3. Update label
+            if (min_label != (GrB_Index)-1)
+            {
+                // labels[srcNode] = min_label; // TODO: potential overflow
+                new_labels[srcNode] = min_label;
+            }
+        }
+        __syncthreads();
+    }
+}
+
 __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Index Aj_size, GrB_Vector *CDLP_handle, GrB_Index N, bool symmetric, int itermax)
 {
     GrB_Index *Ap_k;
@@ -152,6 +301,12 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
     cudaMalloc((void **)&bin_label_k, Aj_size * sizeof(GrB_Index));
     cudaMalloc((void **)&is_equal_k, sizeof(int));
 
+#if optimized1
+    int *bin_index;
+    cudaMalloc((void **)&bin_index, sizeof(int));
+    cudaMemset(bin_index, 0, sizeof(int));
+#endif
+
     cudaMemcpy(Ap_k, Ap, Ap_size * sizeof(GrB_Index), cudaMemcpyHostToDevice);
     cudaMemcpy(Aj_k, Aj, Aj_size * sizeof(GrB_Index), cudaMemcpyHostToDevice);
 
@@ -162,12 +317,17 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
 
     for (int i = 0; i < itermax; ++i)
     {
+#if optimized1
+        cdlp_optimized1<<<DimGrid, DimBlock>>>(Ap_k, Ap_size, Aj_k, labels_k, new_labels_k, N, symmetric, bin_count_k, bin_label_k, bin_index);
+#else
         cdlp_base<<<DimGrid, DimBlock>>>(Ap_k, Ap_size, Aj_k, labels_k, new_labels_k, N, symmetric, bin_count_k, bin_label_k);
-        //cudaDeviceSynchronize();
+#endif
+        // cudaDeviceSynchronize();
         cudaMemset(is_equal_k, 1, sizeof(int));
         check_equality<<<DimGrid, DimBlock>>>(labels_k, new_labels_k, N, is_equal_k);
-        //cudaDeviceSynchronize();
+        // cudaDeviceSynchronize();
         cudaMemcpy(&is_equal, is_equal_k, sizeof(int), cudaMemcpyDeviceToHost);
+        std::cout << i << '\n';
         if (is_equal)
             break;
         else
@@ -184,6 +344,9 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
     cudaFree(Aj_k);
     cudaFree(labels_k);
     cudaFree(new_labels_k);
+#if optimized1
+    cudaFree(bin_index);
+#endif
 
     GrB_Vector CDLP = NULL;
     GrB_Vector_new(&CDLP, GrB_UINT64, N);
