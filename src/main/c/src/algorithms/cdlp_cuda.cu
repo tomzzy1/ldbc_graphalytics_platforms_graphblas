@@ -129,7 +129,10 @@ namespace CUDA_CDLP
         {
             return GrB_NULL_POINTER;
         }
-        PRINT("Starting LAGraph_cdlp_gpu");
+#if DEBUG_PRINT != 0
+        // PRINT("Starting LAGraph_cdlp_gpu");
+        std::cout << "Starting LAGraph_cdlp_gpu" << std::endl;
+#endif
         // set timing to zero
         t[0] = 0; // sanitize time
         t[1] = 0; // CDLP time
@@ -171,7 +174,8 @@ namespace CUDA_CDLP
         //  Otherwise, the matrix is converted to CSR format and then exported.
         //  A will be freed after this call if successful
 #if DEBUG_PRINT != 0
-        PRINT("Exporting matrix to CSR format");
+        // PRINT("Exporting matrix to CSR format");
+        std::cout << "Exporting matrix to CSR format" << std::endl;
 #endif 
         GxB_Matrix_export_CSR(&A, &type, &nrows, &ncols, &Ap, &Aj,
                               &Ax, &Ap_size, &Aj_size, &Ax_size,
@@ -228,7 +232,9 @@ namespace CUDA_CDLP
 #endif
 
         // Call CUDA kernel
+        std::cout << "Processing starts at: " << GetCurrentMilliseconds() << std::endl;
         cdlp_gpu(Ap, Ap_size, Aj, Aj_size, CDLP_handle, n, symmetric, itermax);
+        std::cout << "Processing ends at: " << GetCurrentMilliseconds() << std::endl;
 
         // free matrix mem
         free(Ap);

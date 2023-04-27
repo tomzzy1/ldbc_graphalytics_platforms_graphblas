@@ -51,7 +51,7 @@ void SerializeCDLPResult(
     free(X);
 }
 
-GrB_Vector LA_CDLP(GrB_Matrix A, bool symmetric, int itermax)
+GrB_Vector LA_CDLP_CPU(GrB_Matrix A, bool symmetric, int itermax)
 {
     GrB_Info info;
     GrB_Vector l;
@@ -59,11 +59,23 @@ GrB_Vector LA_CDLP(GrB_Matrix A, bool symmetric, int itermax)
     ComputationTimer timer{"CDLP"};
     double timing[2];
     char msg[LAGRAPH_MSG_LEN];
-#if USE_GPU_CDLP != 0
-    CUDA_CDLP::LAGraph_cdlp_gpu(&l, A, symmetric, false, itermax, timing);
-#else
+    std::cout << "Processing starts at: " << GetCurrentMilliseconds() << std::endl;
     LAGraph_cdlp(&l, A, symmetric, false, itermax, timing, msg);
-#endif
+    std::cout << "Processing ends at: " << GetCurrentMilliseconds() << std::endl;
+
+    return l;
+}
+
+GrB_Vector MY_CDLP_GPU(GrB_Matrix A, bool symmetric, int itermax)
+{
+    GrB_Info info;
+    GrB_Vector l;
+
+    ComputationTimer timer{"CDLP"};
+    double timing[2];
+    char msg[LAGRAPH_MSG_LEN];
+
+    CUDA_CDLP::LAGraph_cdlp_gpu(&l, A, symmetric, false, itermax, timing);
 
     return l;
 }
@@ -82,9 +94,12 @@ int main(int argc, char **argv)
     GrB_Matrix A = ReadMatrixMarket(parameters);
     std::vector<GrB_Index> mapping = ReadMapping(parameters);
 
-    std::cout << "Processing starts at: " << GetCurrentMilliseconds() << std::endl;
-    GrB_Vector result = LA_CDLP(A, !parameters.directed, parameters.max_iteration);
-    std::cout << "Processing ends at: " << GetCurrentMilliseconds() << std::endl;
+    // std::cout << "Processing starts at: " << GetCurrentMilliseconds() << std::endl;
+#if USE_GPU_CDLP != 0
+    GrB_Vector result = MY_CDLP_GPU(A, !parameters.directed, parameters.max_iteration);
+#else 
+    GrB_Vector result = LA_CDLP_CPU(A, !parameters.directed, parameters.max_iteration);
+#endif
 
     SerializeCDLPResult(result, mapping, parameters);
 
