@@ -1,0 +1,4 @@
+*
+!.gitignore
+!download-dataset-small.sh
+!copy-dataset-to-container.sh
