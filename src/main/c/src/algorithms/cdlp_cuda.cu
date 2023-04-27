@@ -139,19 +139,20 @@ namespace CUDA_CDLP
 
         // check input matrix
         GrB_Index n;   // number of nodes in the graph
-        // GrB_Index nz;  // non-zero in the matrix
-        // GrB_Index nnz; //
+        GrB_Index nz;  // non-zero in the matrix
+        GrB_Index nnz; //
         GrB_Matrix_nrows(&n, A);
-        // GrB_Matrix_nvals(&nz, A);
-        // if (!symmetric)
-        // {
-        //     nnz = 2 * nz;
-        // }
-        // else
-        // {
-        //     nnz = nz;
-        // }
-        // PRINT("nnz value is {}", nnz);
+        GrB_Matrix_nvals(&nz, A);
+        if (!symmetric)
+        {
+            nnz = 2 * nz;
+        }
+        else
+        {
+            nnz = nz;
+        }
+        PRINT("symmetric value is {}", symmetric);
+        PRINT("nnz value is {}", nnz);
 
         if (sanitize)
         {
@@ -233,7 +234,7 @@ namespace CUDA_CDLP
 
         // Call CUDA kernel
         std::cout << "Processing starts at: " << GetCurrentMilliseconds() << std::endl;
-        cdlp_gpu(Ap, Ap_size, Aj, Aj_size, CDLP_handle, n, symmetric, itermax);
+        cdlp_gpu(Ap, Ap_size, Aj, Aj_size, CDLP_handle, n, nnz, symmetric, itermax);
         std::cout << "Processing ends at: " << GetCurrentMilliseconds() << std::endl;
 
         // free matrix mem

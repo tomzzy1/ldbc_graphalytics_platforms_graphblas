@@ -1,11 +1,11 @@
 #include "cdlp_kernel.cuh"
 #include <iostream>
 
-// #define optimized1 1
+#define optimized1 1
 
 constexpr int GRID_DIM = 256;
 constexpr int BLOCK_DIM = 1024;
-constexpr int LOCAL_BIN_SIZE = 1;
+constexpr int LOCAL_BIN_SIZE = 16;
 
 __host__ __device__ static inline int ceil_div(int x, int y)
 {
@@ -162,7 +162,7 @@ __global__ void cdlp_optimized1(
             GrB_Index j_max = Ap[srcNode + 1];
             auto neighbor_n = j_max - j_base;
             auto local_n = min(static_cast<unsigned long>(LOCAL_BIN_SIZE), static_cast<unsigned long>(neighbor_n));
-            GrB_Index bin_base;
+            GrB_Index bin_base = j_base;
             for (GrB_Index j = 0; j < local_n; j++)
             {
                 GrB_Index desNode = Aj[j + j_base];
@@ -197,7 +197,7 @@ __global__ void cdlp_optimized1(
             if (neighbor_n > LOCAL_BIN_SIZE)
             {
                 // For next optimization, parallelize this part if neighbor_n >> LOCAL_BIN_SIZE
-                bin_base = atomicAdd(bin_index, neighbor_n - LOCAL_BIN_SIZE); // allocate space in the global bin
+                //bin_base = atomicAdd(bin_index, neighbor_n - LOCAL_BIN_SIZE); // allocate space in the global bin
                 for (GrB_Index j = 0; j < neighbor_n - LOCAL_BIN_SIZE; j++)
                 {
                     GrB_Index desNode = Aj[j + LOCAL_BIN_SIZE + j_base];
@@ -241,6 +241,12 @@ __global__ void cdlp_optimized1(
                             bin_count[b] = (GrB_Index)0;
                         }
                     }
+                    else
+                    {
+                        auto b = bin_base + j;
+                        bin_label[b] = (GrB_Index)-1;
+                        bin_count[b] = (GrB_Index)0;
+                    }
                 }
             }
 
@@ -276,17 +282,12 @@ __global__ void cdlp_optimized1(
             }
 
             // 3. Update label
-            if (min_label != (GrB_Index)-1)
-            {
-                // labels[srcNode] = min_label; // TODO: potential overflow
-                new_labels[srcNode] = min_label;
-            }
+            new_labels[srcNode] = min_label;
         }
-        __syncthreads();
     }
 }
 
-__host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Index Aj_size, GrB_Vector *CDLP_handle, GrB_Index N, bool symmetric, int itermax)
+__host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Index Aj_size, GrB_Vector *CDLP_handle, GrB_Index N, GrB_Index nnz, bool symmetric, int itermax)
 {
     GrB_Index *Ap_k;
     GrB_Index *Aj_k;
@@ -302,8 +303,8 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
     cudaMalloc((void **)&labels_k, N * sizeof(GrB_Index));
     cudaMalloc((void **)&new_labels_k, N * sizeof(GrB_Index));
     cudaMallocHost((void **)&labels, N * sizeof(GrB_Index));
-    cudaMalloc((void **)&bin_count_k, Aj_size);
-    cudaMalloc((void **)&bin_label_k, Aj_size);
+    cudaMalloc((void **)&bin_count_k, nnz * sizeof(GrB_Index));
+    cudaMalloc((void **)&bin_label_k, nnz * sizeof(GrB_Index));
     cudaMalloc((void **)&is_equal_k, sizeof(int));
 
 #if DEBUG_PRINT != 0
@@ -352,11 +353,9 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
             break;
         else
         {
-            // cudaMemcpy(labels_k, new_labels_k, N * sizeof(GrB_Index), cudaMemcpyDeviceToDevice);
+            //cudaMemcpy(labels_k, new_labels_k, N * sizeof(GrB_Index), cudaMemcpyDeviceToDevice);
             // optimization: double buffering, avoid memcpy
-            GrB_Index *tmp = labels_k;
-            labels_k = new_labels_k;
-            new_labels_k = tmp;
+            std::swap(labels_k, new_labels_k);
         }
     }
     cudaDeviceSynchronize();
