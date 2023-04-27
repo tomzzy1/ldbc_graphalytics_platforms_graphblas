@@ -1,9 +1,9 @@
 #include "cdlp_kernel.cuh"
 #include <iostream>
 
-#define optimized1 1
+// #define optimized1 1
 
-constexpr int GRID_DIM = 1;
+constexpr int GRID_DIM = 256;
 constexpr int BLOCK_DIM = 1024;
 constexpr int LOCAL_BIN_SIZE = 1;
 
@@ -12,6 +12,7 @@ __host__ __device__ static inline int ceil_div(int x, int y)
     return (x - 1) / y + 1;
 }
 
+// initialize labels for CDLP
 __global__ void initialize_label(GrB_Index *labels, GrB_Index N)
 {
     int x = blockDim.x * blockIdx.x + threadIdx.x;
@@ -25,6 +26,10 @@ __global__ void initialize_label(GrB_Index *labels, GrB_Index N)
     }
 }
 
+// check if two arrays are equal
+// possible optimization: avoid atomicAdd
+// think of this problem as a reduction problem, then optimize the memeory access
+// TODO: use reduction optimizations from ECE408
 __global__ void check_equality(GrB_Index *labels, GrB_Index *new_labels, GrB_Index N, int *is_equal_k)
 {
     int x = blockDim.x * blockIdx.x + threadIdx.x;
@@ -44,7 +49,6 @@ __global__ void check_equality(GrB_Index *labels, GrB_Index *new_labels, GrB_Ind
 
 __global__ void cdlp_base(
     GrB_Index *Ap, // Row pointers
-    GrB_Index Ap_size,
     GrB_Index *Aj,         // Column indices
     GrB_Index *labels,     // Labels for each node
     GrB_Index *new_labels, // new labels after each iteration
@@ -55,7 +59,8 @@ __global__ void cdlp_base(
     GrB_Index ti = blockDim.x * blockIdx.x + threadIdx.x;
     // Iterate until converge or reaching maximum number
     // Loop through all nodes
-    for (GrB_Index srcNode = ti; srcNode < N; srcNode += BLOCK_DIM)
+    GrB_Index stride = gridDim.x * blockDim.x;
+    for (GrB_Index srcNode = ti; srcNode < N; srcNode += stride)
     {
         if (srcNode < N)
         {
@@ -129,13 +134,12 @@ __global__ void cdlp_base(
                 new_labels[srcNode] = min_label;
             }
         }
-        __syncthreads();
+        // __syncthreads();
     }
 }
 
 __global__ void cdlp_optimized1(
     GrB_Index *Ap, // Row pointers
-    GrB_Index Ap_size,
     GrB_Index *Aj,         // Column indices
     GrB_Index *labels,     // Labels for each node
     GrB_Index *new_labels, // new labels after each iteration
@@ -146,7 +150,8 @@ __global__ void cdlp_optimized1(
     GrB_Index ti = blockDim.x * blockIdx.x + threadIdx.x;
     // Iterate until converge or reaching maximum number
     // Loop through all nodes
-    for (GrB_Index srcNode = ti; srcNode < N; srcNode += BLOCK_DIM)
+    GrB_Index stride = gridDim.x * blockDim.x;
+    for (GrB_Index srcNode = ti; srcNode < N; srcNode += stride)
     {
         if (srcNode < N)
         {
@@ -292,14 +297,19 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
     int is_equal = 1;
     int *is_equal_k;
 
-    cudaMalloc((void **)&Ap_k, Ap_size * sizeof(GrB_Index));
-    cudaMalloc((void **)&Aj_k, Aj_size * sizeof(GrB_Index));
+    cudaMalloc((void **)&Ap_k, Ap_size);
+    cudaMalloc((void **)&Aj_k, Aj_size);
     cudaMalloc((void **)&labels_k, N * sizeof(GrB_Index));
     cudaMalloc((void **)&new_labels_k, N * sizeof(GrB_Index));
     cudaMallocHost((void **)&labels, N * sizeof(GrB_Index));
-    cudaMalloc((void **)&bin_count_k, Aj_size * sizeof(GrB_Index));
-    cudaMalloc((void **)&bin_label_k, Aj_size * sizeof(GrB_Index));
+    cudaMalloc((void **)&bin_count_k, Aj_size);
+    cudaMalloc((void **)&bin_label_k, Aj_size);
     cudaMalloc((void **)&is_equal_k, sizeof(int));
+
+#if DEBUG_PRINT != 0
+    // PRINT("FINISH CUDA MALLOC");
+    std::cout<<"FINISH CUDA MALLOC"<<std::endl;
+#endif
 
 #if optimized1
     int *bin_index;
@@ -307,38 +317,58 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
     cudaMemset(bin_index, 0, sizeof(int));
 #endif
 
-    cudaMemcpy(Ap_k, Ap, Ap_size * sizeof(GrB_Index), cudaMemcpyHostToDevice);
-    cudaMemcpy(Aj_k, Aj, Aj_size * sizeof(GrB_Index), cudaMemcpyHostToDevice);
+    cudaMemcpy(Ap_k, Ap, Ap_size, cudaMemcpyHostToDevice);
+    cudaMemcpy(Aj_k, Aj, Aj_size, cudaMemcpyHostToDevice);
+
+#if DEBUG_PRINT != 0
+    // PRINT("FINISH CUDA MEMCPY");
+    std::cout<<"FINISH CUDA MEMCPY"<<std::endl;
+#endif
 
     dim3 DimGrid(GRID_DIM, 1, 1);
     dim3 DimBlock(BLOCK_DIM, 1);
 
     initialize_label<<<DimGrid, DimBlock>>>(labels_k, N);
 
+    timer_start("CDLP_GPU MAIN LOOP USING CUDA KERNEL");
     for (int i = 0; i < itermax; ++i)
     {
+        // PRINT("RUNNING ITERATION {}", i);
+#if DEBUG_PRINT != 0
+        std::cout<<"RUNNING ITERATION "<<i<<std::endl;
+#endif
+
 #if optimized1
-        cdlp_optimized1<<<DimGrid, DimBlock>>>(Ap_k, Ap_size, Aj_k, labels_k, new_labels_k, N, symmetric, bin_count_k, bin_label_k, bin_index);
+        cdlp_optimized1<<<DimGrid, DimBlock>>>(Ap_k, Aj_k, labels_k, new_labels_k, N, symmetric, bin_count_k, bin_label_k, bin_index);
 #else
-        cdlp_base<<<DimGrid, DimBlock>>>(Ap_k, Ap_size, Aj_k, labels_k, new_labels_k, N, symmetric, bin_count_k, bin_label_k);
+        cdlp_base<<<DimGrid, DimBlock>>>(Ap_k, Aj_k, labels_k, new_labels_k, N, symmetric, bin_count_k, bin_label_k);
 #endif
         // cudaDeviceSynchronize();
         cudaMemset(is_equal_k, 1, sizeof(int));
         check_equality<<<DimGrid, DimBlock>>>(labels_k, new_labels_k, N, is_equal_k);
         // cudaDeviceSynchronize();
         cudaMemcpy(&is_equal, is_equal_k, sizeof(int), cudaMemcpyDeviceToHost);
-        std::cout << i << '\n';
         if (is_equal)
             break;
         else
         {
-            cudaMemcpy(labels_k, new_labels_k, N * sizeof(GrB_Index), cudaMemcpyDeviceToDevice);
+            // cudaMemcpy(labels_k, new_labels_k, N * sizeof(GrB_Index), cudaMemcpyDeviceToDevice);
+            // optimization: double buffering, avoid memcpy
+            GrB_Index *tmp = labels_k;
+            labels_k = new_labels_k;
+            new_labels_k = tmp;
         }
     }
-
     cudaDeviceSynchronize();
 
+    timer_stop();
+
     cudaMemcpy(labels, labels_k, N * sizeof(GrB_Index), cudaMemcpyDeviceToHost);
+
+#if DEBUG_PRINT != 0
+    // PRINT("RUNNING CUDA FREE");
+    std::cout<<"RUNNING CUDA FREE"<<std::endl;
+#endif
 
     cudaFree(Ap_k);
     cudaFree(Aj_k);
@@ -346,6 +376,11 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
     cudaFree(new_labels_k);
 #if optimized1
     cudaFree(bin_index);
+#endif
+
+#if DEBUG_PRINT != 0
+    // PRINT("CONVERT TO GRB_VECTOR");
+    std::cout<<"CONVERT TO GRB_VECTOR"<<std::endl;
 #endif
 
     GrB_Vector CDLP = NULL;
