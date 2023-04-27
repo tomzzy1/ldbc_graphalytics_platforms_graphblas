@@ -13,7 +13,7 @@
 
 #include "cdlp_cuda.cuh"
 
-#define USE_GPU_CDLP 0
+#define USE_GPU_CDLP 1
 
 /*
  * Result serializer function

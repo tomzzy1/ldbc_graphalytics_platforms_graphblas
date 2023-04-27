@@ -3,6 +3,12 @@
 
 #include <cuda.h>
 #include "graphio.h"
+#include "common/fmt.hpp"
+#include "common/utils.hpp"
+
+#define PRINT(...) LOG(info, std::string(fmt::format(__VA_ARGS__)))
+
+#define DEBUG_PRINT 1
 
 
 __global__ void initialize_label(GrB_Index *labels, GrB_Index N);

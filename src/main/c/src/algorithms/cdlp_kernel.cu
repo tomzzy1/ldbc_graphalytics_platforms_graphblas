@@ -1,9 +1,9 @@
 #include "cdlp_kernel.cuh"
 #include <iostream>
 
-#define optimized1 1
+// #define optimized1 1
 
-constexpr int GRID_DIM = 1;
+constexpr int GRID_DIM = 256;
 constexpr int BLOCK_DIM = 1024;
 constexpr int LOCAL_BIN_SIZE = 1;
 
@@ -12,6 +12,7 @@ __host__ __device__ static inline int ceil_div(int x, int y)
     return (x - 1) / y + 1;
 }
 
+// initialize labels for CDLP
 __global__ void initialize_label(GrB_Index *labels, GrB_Index N)
 {
     int x = blockDim.x * blockIdx.x + threadIdx.x;
@@ -25,6 +26,10 @@ __global__ void initialize_label(GrB_Index *labels, GrB_Index N)
     }
 }
 
+// check if two arrays are equal
+// possible optimization: avoid atomicAdd
+// think of this problem as a reduction problem, then optimize the memeory access
+// TODO: use reduction optimizations from ECE408
 __global__ void check_equality(GrB_Index *labels, GrB_Index *new_labels, GrB_Index N, int *is_equal_k)
 {
     int x = blockDim.x * blockIdx.x + threadIdx.x;
@@ -55,7 +60,8 @@ __global__ void cdlp_base(
     GrB_Index ti = blockDim.x * blockIdx.x + threadIdx.x;
     // Iterate until converge or reaching maximum number
     // Loop through all nodes
-    for (GrB_Index srcNode = ti; srcNode < N; srcNode += BLOCK_DIM)
+    GrB_Index stride = gridDim.x * blockDim.x;
+    for (GrB_Index srcNode = ti; srcNode < N; srcNode += stride)
     {
         if (srcNode < N)
         {
@@ -129,7 +135,7 @@ __global__ void cdlp_base(
                 new_labels[srcNode] = min_label;
             }
         }
-        __syncthreads();
+        // __syncthreads();
     }
 }
 
@@ -146,7 +152,8 @@ __global__ void cdlp_optimized1(
     GrB_Index ti = blockDim.x * blockIdx.x + threadIdx.x;
     // Iterate until converge or reaching maximum number
     // Loop through all nodes
-    for (GrB_Index srcNode = ti; srcNode < N; srcNode += BLOCK_DIM)
+    GrB_Index stride = gridDim.x * blockDim.x;
+    for (GrB_Index srcNode = ti; srcNode < N; srcNode += stride)
     {
         if (srcNode < N)
         {
@@ -301,6 +308,8 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
     cudaMalloc((void **)&bin_label_k, Aj_size * sizeof(GrB_Index));
     cudaMalloc((void **)&is_equal_k, sizeof(int));
 
+    PRINT("FINISH CUDA MALLOC");
+
 #if optimized1
     int *bin_index;
     cudaMalloc((void **)&bin_index, sizeof(int));
@@ -310,6 +319,8 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
     cudaMemcpy(Ap_k, Ap, Ap_size * sizeof(GrB_Index), cudaMemcpyHostToDevice);
     cudaMemcpy(Aj_k, Aj, Aj_size * sizeof(GrB_Index), cudaMemcpyHostToDevice);
 
+    PRINT("FINISH CUDA MEMCPY");
+
     dim3 DimGrid(GRID_DIM, 1, 1);
     dim3 DimBlock(BLOCK_DIM, 1);
 
@@ -317,6 +328,8 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
 
     for (int i = 0; i < itermax; ++i)
     {
+        PRINT("RUNNING ITERATION {}", i);
+
 #if optimized1
         cdlp_optimized1<<<DimGrid, DimBlock>>>(Ap_k, Ap_size, Aj_k, labels_k, new_labels_k, N, symmetric, bin_count_k, bin_label_k, bin_index);
 #else
@@ -332,7 +345,11 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
             break;
         else
         {
-            cudaMemcpy(labels_k, new_labels_k, N * sizeof(GrB_Index), cudaMemcpyDeviceToDevice);
+            // cudaMemcpy(labels_k, new_labels_k, N * sizeof(GrB_Index), cudaMemcpyDeviceToDevice);
+            // optimization: double buffering, avoid memcpy
+            GrB_Index *tmp = labels_k;
+            labels_k = new_labels_k;
+            new_labels_k = tmp;
         }
     }
 
@@ -340,6 +357,7 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
 
     cudaMemcpy(labels, labels_k, N * sizeof(GrB_Index), cudaMemcpyDeviceToHost);
 
+    PRINT("RUNNING CUDA FREE");
     cudaFree(Ap_k);
     cudaFree(Aj_k);
     cudaFree(labels_k);
@@ -348,6 +366,7 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
     cudaFree(bin_index);
 #endif
 
+    PRINT("CONVERT TO GRB_VECTOR");
     GrB_Vector CDLP = NULL;
     GrB_Vector_new(&CDLP, GrB_UINT64, N);
     for (GrB_Index i = 0; i < N; i++)
