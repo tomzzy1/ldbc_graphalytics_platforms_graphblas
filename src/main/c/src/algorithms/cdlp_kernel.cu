@@ -1,7 +1,8 @@
 #include "cdlp_kernel.cuh"
 #include <iostream>
 
-#define optimized1 1
+#define optimized1 0
+#define optimized_hash 1
 
 constexpr int GRID_DIM = 256;
 constexpr int BLOCK_DIM = 1024;
@@ -287,6 +288,119 @@ __global__ void cdlp_optimized1(
     }
 }
 
+
+// hash table optimization
+#define HASH_TABLE_SIZE_FACTOR 2
+
+typedef struct{
+    int iter_count;     // version number
+    int relative_idx;   // index number in the bin
+    GrB_Index label;    // key for hashing
+    GrB_Index count;    // value for hashing
+}hash_table_item;
+
+// hash function for key = label and capacity = n
+__device__ __forceinline__ int hash_func(GrB_Index label, GrB_Index n)
+{
+    const GrB_Index prime = 2147483647;  // A large prime number
+    GrB_Index hash = label % prime;
+    hash %= n;
+    return (int)hash;
+}
+
+__device__ __forceinline__ GrB_Index hash_table_get_count(int iter, hash_table_item* htable, GrB_Index start, GrB_Index end, GrB_Index label)
+{
+    return 0;
+}
+
+// __device__ __forceinline__ GrB_Index hash_table_set_count(int iter, hash_table_item* htable, GrB_Index start, GrB_Index end, GrB_Index label, GrB_Index value)
+// {
+//     return 0;
+// }
+
+
+__device__ __forceinline__ GrB_Index hash_table_inc_count(int iter, hash_table_item* htable, GrB_Index start, GrB_Index end, GrB_Index label, GrB_Index delta)
+{
+#define gethtable(idx) htable[start+idx]
+    GrB_Index capacity = end - start + 1; // capacity should not overflow int32_t even though we use uint64_t, otherwise too large
+    int  relative_idx = hash_func(label, capacity);
+    int location = -1;
+    // linear probing
+    while (gethtable(relative_idx).iter_count == iter){
+        // same iteration number, key already exist, add count
+        if (gethtable(relative_idx).label == label){
+            gethtable(relative_idx).count += delta;
+            return gethtable(relative_idx).count;
+        }
+        relative_idx = (relative_idx + 1) % capacity;
+    }
+    // break out of the loop, key not exist, add new key
+    if (location < 0){
+        location = relative_idx;
+    }
+    gethtable(location).iter_count = iter;
+    gethtable(location).relative_idx = relative_idx;
+    gethtable(location).label = label;
+    gethtable(location).count = delta;
+    return gethtable(location).count;
+#undef gethtable
+}
+
+__global__ void cdlp_base_with_hashing(
+    int iteration_count,   // Current iteration, start counting from 1 so that 0 means not yet used
+    GrB_Index *Ap,         // Row pointers
+    GrB_Index *Aj,         // Column indices
+    GrB_Index *labels,     // Labels for each node
+    GrB_Index *new_labels, // new labels after each iteration
+    GrB_Index N,           // Number of nodes
+    bool symmetric,        // Is the matrix symmetric (aka is the graph undirected)
+    hash_table_item* htable
+){
+    GrB_Index ti = blockDim.x * blockIdx.x + threadIdx.x;
+    // Iterate until converge or reaching maximum number
+    // Loop through all nodes
+    GrB_Index stride = gridDim.x * blockDim.x;
+    for (GrB_Index srcNode = ti; srcNode < N; srcNode += stride)
+    {
+        if (srcNode < N)
+        {
+            // 1. Count neighbors' labels
+            GrB_Index j_base = Ap[srcNode];
+            GrB_Index j_max = Ap[srcNode + 1];
+            GrB_Index max_count = (GrB_Index)0;
+            GrB_Index min_label = (GrB_Index)-1;
+
+            for (GrB_Index j = j_base; j < j_max; j++)
+            {
+                GrB_Index desNode = Aj[j];
+                GrB_Index label = labels[desNode]; // Label of destination node
+
+                // 1.1 If is a directed graph
+                GrB_Index incr = 1;
+
+                // 1.2 build hash table
+                int segment_start = j_base*HASH_TABLE_SIZE_FACTOR;
+                int segment_end = j_max*HASH_TABLE_SIZE_FACTOR - 1; // inclusive index
+                GrB_Index new_count = hash_table_inc_count(iteration_count, htable, segment_start, segment_end, label, incr);
+                if (new_count > max_count){
+                    max_count = new_count;
+                    min_label = label;
+                }else if (new_count == max_count && label < min_label){
+                    min_label = label;
+                }
+            }
+
+            // 2. Update label
+            if (min_label != (GrB_Index)-1)
+            {
+                // labels[srcNode] = min_label; // TODO: potential overflow
+                new_labels[srcNode] = min_label;
+            }
+        }
+        // __syncthreads();
+    }
+}
+
 __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Index Aj_size, GrB_Vector *CDLP_handle, GrB_Index N, GrB_Index nnz, bool symmetric, int itermax)
 {
     GrB_Index *Ap_k;
@@ -294,18 +408,26 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
     GrB_Index *labels_k;
     GrB_Index *new_labels_k;
     GrB_Index *labels;
-    GrB_Index *bin_count_k, *bin_label_k; // For dynamically counting labels (can be optimized using shared memory plus a overflow global memory)
     int is_equal = 1;
     int *is_equal_k;
+#if optimized_hash
+    hash_table_item* htable_k;
+#else
+    GrB_Index *bin_count_k, *bin_label_k; // For dynamically counting labels (can be optimized using shared memory plus a overflow global memory)
+#endif
 
     cudaMalloc((void **)&Ap_k, Ap_size);
     cudaMalloc((void **)&Aj_k, Aj_size);
     cudaMalloc((void **)&labels_k, N * sizeof(GrB_Index));
     cudaMalloc((void **)&new_labels_k, N * sizeof(GrB_Index));
     cudaMallocHost((void **)&labels, N * sizeof(GrB_Index));
+    cudaMalloc((void **)&is_equal_k, sizeof(int));
+#if optimized_hash
+    cudaMalloc((void**)&htable_k, HASH_TABLE_SIZE_FACTOR * nnz * sizeof(hash_table_item));
+#else
     cudaMalloc((void **)&bin_count_k, nnz * sizeof(GrB_Index));
     cudaMalloc((void **)&bin_label_k, nnz * sizeof(GrB_Index));
-    cudaMalloc((void **)&is_equal_k, sizeof(int));
+#endif
 
 #if DEBUG_PRINT != 0
     // PRINT("FINISH CUDA MALLOC");
@@ -320,6 +442,10 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
 
     cudaMemcpy(Ap_k, Ap, Ap_size, cudaMemcpyHostToDevice);
     cudaMemcpy(Aj_k, Aj, Aj_size, cudaMemcpyHostToDevice);
+
+#if optimized_hash
+    cudaMemset(htable_k, 0, nnz * sizeof(hash_table_item));
+#endif
 
 #if DEBUG_PRINT != 0
     // PRINT("FINISH CUDA MEMCPY");
@@ -341,6 +467,8 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
 
 #if optimized1
         cdlp_optimized1<<<DimGrid, DimBlock>>>(Ap_k, Aj_k, labels_k, new_labels_k, N, symmetric, bin_count_k, bin_label_k, bin_index);
+#elif optimized_hash
+        cdlp_base_with_hashing<<<DimGrid, DimBlock>>>(i+1, Ap_k, Aj_k, labels_k, new_labels_k, N, symmetric, htable_k);
 #else
         cdlp_base<<<DimGrid, DimBlock>>>(Ap_k, Aj_k, labels_k, new_labels_k, N, symmetric, bin_count_k, bin_label_k);
 #endif
@@ -373,6 +501,13 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
     cudaFree(Aj_k);
     cudaFree(labels_k);
     cudaFree(new_labels_k);
+    cudaFree(is_equal_k);
+#if optimized_hash
+    cudaFree(htable_k);
+#else
+    cudaFree(bin_count_k);
+    cudaFree(bin_label_k);
+#endif
 #if optimized1
     cudaFree(bin_index);
 #endif
@@ -390,5 +525,5 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
     }
     (*CDLP_handle) = CDLP;
 
-    cudaFree(labels);
+    cudaFreeHost(labels);
 }

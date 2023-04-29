@@ -8,7 +8,7 @@
 
 #define PRINT(...) LOG(info, std::string(fmt::format(__VA_ARGS__)))
 
-#define DEBUG_PRINT 1
+#define DEBUG_PRINT 0
 
 
 __global__ void initialize_label(GrB_Index *labels, GrB_Index N);
