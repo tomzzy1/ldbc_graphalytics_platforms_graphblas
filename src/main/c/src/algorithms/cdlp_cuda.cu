@@ -161,7 +161,7 @@ namespace CUDA_CDLP
 
         // convert input matrix to CUDA sparse matrix CSR format
         // variables for matrix export return
-        GrB_Type type; // should be GrB_UINT64, suited for CUDA kernel
+        GrB_Type type; // should be GrB_INT64, suited for CUDA kernel
         size_t typesize;
         GrB_Index nrows, ncols;              // Matrix Dimensions, should be n x n
         GrB_Index *Ap;                       // row "pointers", Ap_size >= nrows+1
@@ -183,10 +183,10 @@ namespace CUDA_CDLP
                               &A_iso, &A_jumbled, NULL);
         GxB_Type_size(&typesize, type);
 
-        if (type != GrB_INT64)
+        if (Ax_size / typesize != 1)
         {
-            PRINT("type not supported with CUDA kernel");
-            PRINT("type is {}", grb_type_to_string(type));
+            PRINT("Ax not binary, ie. the value in graph is not just 0/1, which is not supported by our CUDA kernel, need to sanitize first");
+            PRINT("Ax data type is {}", grb_type_to_string(type));
             return GrB_NOT_IMPLEMENTED;
         }
 #if DEBUG_PRINT != 0
