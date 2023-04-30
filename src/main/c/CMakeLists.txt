@@ -32,6 +32,7 @@ find_package(GraphBLAS 7.0.1 REQUIRED MODULE)
 find_package(LAGraph 1.0.1 REQUIRED MODULE)
 
 find_package(CUDA REQUIRED)
+find_package(CUDAToolkit REQUIRED)
 
 include_directories(${CMAKE_SOURCE_DIR}/include
                     ${GRAPHBLAS_INCLUDE_DIR}
@@ -66,7 +67,11 @@ set_target_properties( cdlp PROPERTIES
                        # CUDA_SEPARABLE_COMPILATION ON
                        CUDA_RESOLVE_DEVICE_SYMBOLS ON
                       )
-target_link_libraries(cdlp ${CUDA_LIBRARIES})
+target_link_libraries(cdlp ${CUDA_LIBRARIES} ${CUDA_cudadevrt_LIBRARY})
+set_target_properties(cdlp PROPERTIES
+                       CUDA_SEPARABLE_COMPILATION ON
+                       #CUDA_RESOLVE_DEVICE_SYMBOLS ON
+                      )
 
 # add_executable(lcc src/algorithms/lcc.cpp)
 # add_executable(pr src/algorithms/pr.cpp)
