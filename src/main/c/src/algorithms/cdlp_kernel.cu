@@ -449,6 +449,7 @@ __global__ void cdlp_child(GrB_Index srcNode, GrB_Index neighbor_n, int iteratio
     GrB_Index min_label = (GrB_Index)-1;
     int segment_start = j_base * HASH_TABLE_SIZE_FACTOR;
     int segment_end = j_max * HASH_TABLE_SIZE_FACTOR - 1; // inclusive index
+    __shared__ GrB_Index local_max_counts[BLOCK_DIM2];
     for (GrB_Index j = ti; j < neighbor_n; j += blockDim.x)
     {
         if (j < neighbor_n)
@@ -461,7 +462,7 @@ __global__ void cdlp_child(GrB_Index srcNode, GrB_Index neighbor_n, int iteratio
 
             // 1.2 build hash table
             GrB_Index new_count = hash_table_inc_count_atomic(iteration_count, htable, segment_start, segment_end, label, incr);
-            atomicMax(reinterpret_cast<unsigned long long int *>(&max_counts[srcNode]), static_cast<unsigned long long int>(new_count));
+            // atomicMax(reinterpret_cast<unsigned long long int *>(&max_counts[srcNode]), static_cast<unsigned long long int>(new_count));
             if (new_count > max_count)
             {
                 max_count = new_count;
@@ -473,8 +474,21 @@ __global__ void cdlp_child(GrB_Index srcNode, GrB_Index neighbor_n, int iteratio
             }
         }
     }
+    local_max_counts[ti] = max_count;
+    int stride = 1;
+    while (stride < BLOCK_DIM2)
+    {
+        __syncthreads();
+        int index = (threadIdx.x + 1) * stride * 2 - 1;
+        if (index < BLOCK_DIM2 && index >= stride)
+        {
+            local_max_counts[index] = max(local_max_counts[index], local_max_counts[index - stride]);
+        }
+        stride *= 2;
+    }
     __syncthreads();
-    if (max_count == max_counts[srcNode])
+    //if (max_count == max_counts[srcNode])
+    if (max_count == local_max_counts[BLOCK_DIM2 - 1])
     {
         atomicMin(reinterpret_cast<unsigned long long int *>(&new_labels[srcNode]), static_cast<unsigned long long int>(min_label));
     }
