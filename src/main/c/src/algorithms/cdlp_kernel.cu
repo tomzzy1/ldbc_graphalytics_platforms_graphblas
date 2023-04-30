@@ -5,11 +5,12 @@
 #define optimized_hash 0
 #define optimized_hash1 1
 
-constexpr int GRID_DIM = 256;
+constexpr int GRID_DIM = 64;
 constexpr int BLOCK_DIM = 1024;
 constexpr int LOCAL_BIN_SIZE = 16;
-constexpr int PAR_THRESHOLD = 256;
-constexpr int BLOCK_DIM2 = 256;
+constexpr int PAR_THRESHOLD = 5000;
+constexpr int PAR_MAX_ITERATION = 2;
+constexpr int BLOCK_DIM2 = 64;
 
 __host__ __device__ static inline int ceil_div(int x, int y)
 {
@@ -296,6 +297,9 @@ __global__ void cdlp_optimized1(
 
 typedef struct
 {
+#if optimized_hash1
+    int mutex;
+#endif
     int iter_count;   // version number
     int relative_idx; // index number in the bin
     GrB_Index label;  // key for hashing
@@ -351,23 +355,33 @@ __device__ __forceinline__ GrB_Index hash_table_inc_count(int iter, hash_table_i
 #undef gethtable
 }
 
+#if optimized_hash1
 __device__ __forceinline__ GrB_Index hash_table_inc_count_atomic(int iter, hash_table_item *htable, GrB_Index start, GrB_Index end, GrB_Index label, GrB_Index delta)
 {
 #define gethtable(idx) htable[start + idx]
+#define lockslot(idx) while (atomicCAS(&(gethtable(idx).mutex), 0, 1) != 0)
+#define unlockslot(idx) atomicExch(&(gethtable(idx).mutex), 0);
     GrB_Index capacity = end - start + 1; // capacity should not overflow int32_t even though we use uint64_t, otherwise too large
     int relative_idx = hash_func(label, capacity);
     int location = -1;
     // linear probing
-    while (gethtable(relative_idx).iter_count == iter)
+    while (1)
     {
+        lockslot(relative_idx);
+        if (gethtable(relative_idx).iter_count != iter){
+            break;
+        }
         // same iteration number, key already exist, add count
         if (gethtable(relative_idx).label == label)
         {
             // gethtable(relative_idx).count += delta;
-            auto old_count = atomicAdd(reinterpret_cast<unsigned long long int *>(&(gethtable(relative_idx).count)), static_cast<unsigned long long int>(delta));
+            gethtable(relative_idx).count += delta;
+            auto ret = gethtable(relative_idx).count;
+            unlockslot(relative_idx);
             // return gethtable(relative_idx).count;
-            return old_count + delta;
+            return ret;
         }
+        unlockslot(relative_idx);
         relative_idx = (relative_idx + 1) % capacity;
     }
     // break out of the loop, key not exist, add new key
@@ -376,13 +390,16 @@ __device__ __forceinline__ GrB_Index hash_table_inc_count_atomic(int iter, hash_
         location = relative_idx;
     }
     gethtable(location).iter_count = iter;
-    gethtable(location).relative_idx = relative_idx;
+    gethtable(location).relative_idx = location;
     gethtable(location).label = label;
-    // gethtable(location).count = delta;
-    auto old_count = atomicAdd(reinterpret_cast<unsigned long long int *>(&(gethtable(location).count)), static_cast<unsigned long long int>(delta));
-    return old_count + delta;
+    gethtable(location).count = delta;
+    unlockslot(location);
+    return delta;
+#undef unlockslot
+#undef lockslot
 #undef gethtable
 }
+#endif
 
 __global__ void cdlp_base_with_hashing(
     int iteration_count,   // Current iteration, start counting from 1 so that 0 means not yet used
@@ -442,44 +459,56 @@ __global__ void cdlp_base_with_hashing(
     }
 }
 
-__global__ void cdlp_child(GrB_Index srcNode, GrB_Index neighbor_n, int iteration_count, GrB_Index *Aj, GrB_Index *labels, GrB_Index *new_labels, GrB_Index j_base, GrB_Index j_max, hash_table_item *htable, GrB_Index *max_counts)
+#if optimized_hash1
+__global__ void cdlp_child(GrB_Index srcNode, GrB_Index neighbor_n, int iteration_count, GrB_Index *Aj, GrB_Index *labels, GrB_Index *new_labels, GrB_Index j_base, GrB_Index j_max, hash_table_item *htable)
 {
-    GrB_Index ti = threadIdx.x;
-    GrB_Index max_count = (GrB_Index)0;
-    GrB_Index min_label = (GrB_Index)-1;
+    int ti = threadIdx.x;
+    unsigned long long max_count = (unsigned long long)0;
+    unsigned long long min_label = (unsigned long long)-1;
     int segment_start = j_base * HASH_TABLE_SIZE_FACTOR;
     int segment_end = j_max * HASH_TABLE_SIZE_FACTOR - 1; // inclusive index
+    // use int instead of GrB_Index to save resource, the count won't really exceed int anyway
+    __shared__ unsigned long long shared_min_label;
+    __shared__ unsigned long long shared_max_count;
+    if (ti == 0){
+        shared_min_label = (unsigned long long)-1;
+        shared_max_count = (unsigned long long)0;
+    }
+    __syncthreads();
+    // start to update max count
     for (GrB_Index j = ti; j < neighbor_n; j += blockDim.x)
     {
-        if (j < neighbor_n)
+        GrB_Index desNode = Aj[j_base + j];
+        GrB_Index label = labels[desNode]; // Label of destination node
+
+        // 1.1 If is a directed graph
+        GrB_Index incr = 1;
+
+        // 1.2 build hash table
+        GrB_Index new_count = hash_table_inc_count_atomic(iteration_count, htable, segment_start, segment_end, label, incr);
+
+        if (new_count > max_count)
         {
-            GrB_Index desNode = Aj[j_base + j];
-            GrB_Index label = labels[desNode]; // Label of destination node
-
-            // 1.1 If is a directed graph
-            GrB_Index incr = 1;
-
-            // 1.2 build hash table
-            GrB_Index new_count = hash_table_inc_count_atomic(iteration_count, htable, segment_start, segment_end, label, incr);
-            atomicMax(reinterpret_cast<unsigned long long int *>(&max_counts[srcNode]), static_cast<unsigned long long int>(new_count));
-            if (new_count > max_count)
-            {
-                max_count = new_count;
-                min_label = label;
-            }
-            else if (new_count == max_count && label < min_label)
-            {
-                min_label = label;
-            }
+            max_count = new_count;
+            min_label = label;
+        }
+        else if (new_count == max_count && label < min_label)
+        {
+            min_label = label;
         }
     }
+    atomicMax(&shared_max_count, max_count);
     __syncthreads();
-    if (max_count == max_counts[srcNode])
+    if (max_count == shared_max_count)
     {
-        atomicMin(reinterpret_cast<unsigned long long int *>(&new_labels[srcNode]), static_cast<unsigned long long int>(min_label));
+        atomicMin(&shared_min_label, min_label);
     }
     __syncthreads();
+    if (ti == 0){
+        new_labels[srcNode] = shared_min_label;
+    }
 }
+
 
 __global__ void cdlp_base_with_hashing1(
     int iteration_count,   // Current iteration, start counting from 1 so that 0 means not yet used
@@ -489,9 +518,8 @@ __global__ void cdlp_base_with_hashing1(
     GrB_Index *new_labels, // new labels after each iteration
     GrB_Index N,           // Number of nodes
     bool symmetric,        // Is the matrix symmetric (aka is the graph undirected)
-    hash_table_item *htable,
-    GrB_Index *max_counts)
-{
+    hash_table_item *htable
+){
     GrB_Index ti = blockDim.x * blockIdx.x + threadIdx.x;
     // Iterate until converge or reaching maximum number
     // Loop through all nodes
@@ -506,10 +534,11 @@ __global__ void cdlp_base_with_hashing1(
             GrB_Index max_count = (GrB_Index)0;
             GrB_Index min_label = (GrB_Index)-1;
             GrB_Index neighbor_n = j_max - j_base;
-            if (neighbor_n > PAR_THRESHOLD)
+            if (neighbor_n > PAR_THRESHOLD && iteration_count < PAR_MAX_ITERATION)
             {
                 new_labels[srcNode] = (GrB_Index)-1;
-                cdlp_child<<<1, BLOCK_DIM2>>>(srcNode, neighbor_n, iteration_count, Aj, labels, new_labels, j_base, j_max, htable, max_counts);
+                cdlp_child<<<1, BLOCK_DIM2>>>(srcNode, neighbor_n, iteration_count, Aj, labels, new_labels, j_base, j_max, htable);
+                cudaDeviceSynchronize();
             }
             else
             {
@@ -547,7 +576,10 @@ __global__ void cdlp_base_with_hashing1(
         // __syncthreads();
     }
 }
+#endif
 
+
+// entry point
 __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Index Aj_size, GrB_Vector *CDLP_handle, GrB_Index N, GrB_Index nnz, bool symmetric, int itermax)
 {
     GrB_Index *Ap_k;
@@ -582,11 +614,11 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
     cudaMalloc((void **)&bin_label_k, nnz * sizeof(GrB_Index));
 #endif
 
-#if optimized_hash1
-    GrB_Index *max_counts_k;
-    cudaMalloc((void **)&max_counts_k, N * sizeof(GrB_Index));
-    cudaMemset(max_counts_k, 0, N * sizeof(GrB_Index));
-#endif
+// #if optimized_hash1
+//     GrB_Index *max_counts_k;
+//     cudaMalloc((void **)&max_counts_k, N * sizeof(GrB_Index));
+//     cudaMemset(max_counts_k, 0, N * sizeof(GrB_Index));
+// #endif
 
 #if DEBUG_PRINT != 0
     // PRINT("FINISH CUDA MALLOC");
@@ -629,7 +661,7 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
 #elif optimized_hash
         cdlp_base_with_hashing<<<DimGrid, DimBlock>>>(i + 1, Ap_k, Aj_k, labels_k, new_labels_k, N, symmetric, htable_k);
 #elif optimized_hash1
-        cdlp_base_with_hashing1<<<DimGrid, DimBlock>>>(i + 1, Ap_k, Aj_k, labels_k, new_labels_k, N, symmetric, htable_k, max_counts_k);
+        cdlp_base_with_hashing1<<<DimGrid, DimBlock>>>(i + 1, Ap_k, Aj_k, labels_k, new_labels_k, N, symmetric, htable_k);
 #else
         cdlp_base<<<DimGrid, DimBlock>>>(Ap_k, Aj_k, labels_k, new_labels_k, N, symmetric, bin_count_k, bin_label_k);
 #endif
@@ -669,10 +701,10 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
             }
 #endif
 
-#if optimized_hash1
-            cudaMemset(max_counts_k, 0, N * sizeof(GrB_Index));
-            cudaMemset(htable_k, 0, HASH_TABLE_SIZE_FACTOR * nnz * sizeof(hash_table_item));
-#endif
+// #if optimized_hash1
+//             // cudaMemset(max_counts_k, 0, N * sizeof(GrB_Index));
+//             // cudaMemset(htable_k, 0, HASH_TABLE_SIZE_FACTOR * nnz * sizeof(hash_table_item));
+// #endif
         }
     }
     cudaDeviceSynchronize();
@@ -703,9 +735,9 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
 #if optimized1
     cudaFree(bin_index);
 #endif
-#if optimized_hash1
-    cudaFree(max_counts_k);
-#endif
+// #if optimized_hash1
+//     cudaFree(max_counts_k);
+// #endif
 
 #if DEBUG_PRINT != 0
     // PRINT("CONVERT TO GRB_VECTOR");
