@@ -236,7 +236,7 @@ namespace CUDA_CDLP
         }
 
 #endif
-
+        std::cout << "[CUDA][LOG] iteration max = " << itermax << std::endl;
         // Call CUDA kernel
         std::cout << "Processing starts at: " << GetCurrentMilliseconds() << std::endl;
         cdlp_gpu(Ap, Ap_size, Aj, Aj_size, CDLP_handle, n, nnz, symmetric, itermax);

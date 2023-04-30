@@ -1,16 +1,22 @@
 #include "cdlp_kernel.cuh"
 #include <iostream>
 
+//  choose to open on
 #define optimized1 0
 #define optimized_hash 0
 #define optimized_hash1 1
 
+// always open
+#define optimized_skip_checkequal 1
+
 constexpr int GRID_DIM = 64;
 constexpr int BLOCK_DIM = 1024;
 constexpr int LOCAL_BIN_SIZE = 16;
-constexpr int PAR_THRESHOLD = 5000;
-constexpr int PAR_MAX_ITERATION = 2;
-constexpr int BLOCK_DIM2 = 64;
+constexpr int PAR_THRESHOLD = 4800;
+constexpr int PAR_MAX_ITERATION = 5;
+constexpr int BLOCK_DIM2 = 128;
+
+#define MIN(x, y) (x < y ? x : y)
 
 __host__ __device__ static inline int ceil_div(int x, int y)
 {
@@ -537,7 +543,8 @@ __global__ void cdlp_base_with_hashing1(
             if (neighbor_n > PAR_THRESHOLD && iteration_count < PAR_MAX_ITERATION)
             {
                 new_labels[srcNode] = (GrB_Index)-1;
-                cdlp_child<<<1, BLOCK_DIM2>>>(srcNode, neighbor_n, iteration_count, Aj, labels, new_labels, j_base, j_max, htable);
+                int blocksize_dynamic = ceil_div(neighbor_n, PAR_THRESHOLD);
+                cdlp_child<<<1, blocksize_dynamic>>>(srcNode, neighbor_n, iteration_count, Aj, labels, new_labels, j_base, j_max, htable);
                 cudaDeviceSynchronize();
             }
             else
@@ -665,15 +672,25 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
 #else
         cdlp_base<<<DimGrid, DimBlock>>>(Ap_k, Aj_k, labels_k, new_labels_k, N, symmetric, bin_count_k, bin_label_k);
 #endif
-        // cudaDeviceSynchronize();
+
+#if optimized_skip_checkequal
+        if (i < MIN(itermax, 5)){
+            is_equal = 0;
+        }else{
+            cudaMemset(is_equal_k, 1, sizeof(int));
+            check_equality<<<DimGrid, DimBlock>>>(labels_k, new_labels_k, N, is_equal_k);
+            // cudaDeviceSynchronize();
+            cudaMemcpy(&is_equal, is_equal_k, sizeof(int), cudaMemcpyDeviceToHost);
+        }
+#else
         cudaMemset(is_equal_k, 1, sizeof(int));
         check_equality<<<DimGrid, DimBlock>>>(labels_k, new_labels_k, N, is_equal_k);
         // cudaDeviceSynchronize();
         cudaMemcpy(&is_equal, is_equal_k, sizeof(int), cudaMemcpyDeviceToHost);
-        if (is_equal)
+#endif
+        if (is_equal){
             break;
-        else
-        {
+        }else{
             // cudaMemcpy(labels_k, new_labels_k, N * sizeof(GrB_Index), cudaMemcpyDeviceToDevice);
             //  optimization: double buffering, avoid memcpy
             std::swap(labels_k, new_labels_k);
