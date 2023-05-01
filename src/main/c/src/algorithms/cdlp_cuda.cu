@@ -177,7 +177,7 @@ namespace CUDA_CDLP
 #if DEBUG_PRINT != 0
         // PRINT("Exporting matrix to CSR format");
         std::cout << "Exporting matrix to CSR format" << std::endl;
-#endif 
+#endif
         GxB_Matrix_export_CSR(&A, &type, &nrows, &ncols, &Ap, &Aj,
                               &Ax, &Ap_size, &Aj_size, &Ax_size,
                               &A_iso, &A_jumbled, NULL);
@@ -194,44 +194,49 @@ namespace CUDA_CDLP
         PRINT("Ap_size is {}, Aj_size is {}, Ax_size is {}", Ap_size, Aj_size, Ax_size);
         PRINT("A_iso is {}, A_jumbled is {}", A_iso, A_jumbled);
         // print arrays
-        // PRINT("Ap is:");
-        // std::vector<uint64_t> Ap_vec(Ap, Ap + (Ap_size / sizeof(uint64_t)));
-        // std::string str1;
-        // for (size_t i = 0; i < Ap_vec.size(); ++i)
-        // {
-        //     str1 += std::to_string(Ap_vec[i]);
-        //     if (i < Ap_vec.size() - 1)
-        //     {
-        //         str1 += ' ';
-        //     }
-        // }
-        // PRINT("{}", str1);
-        // PRINT("Aj is:");
-        // std::vector<uint64_t> Aj_vec(Aj, Aj + (Aj_size / sizeof(uint64_t)));
-        // std::string str2;
-        // for (size_t i = 0; i < Aj_vec.size(); ++i)
-        // {
-        //     str2 += std::to_string(Aj_vec[i]);
-        //     if (i < Aj_vec.size() - 1)
-        //     {
-        //         str2 += ' ';
-        //     }
-        // }
-        // PRINT("{}", str2);
-        // PRINT("Ax is:");
-        // std::vector<int64_t> Ax_vec((int64_t *)Ax, (int64_t *)Ax + (Ax_size / sizeof(int64_t)));
-        // std::string str3;
-        // for (size_t i = 0; i < Ax_vec.size(); ++i)
-        // {
-        //     str3 += std::to_string(Ax_vec[i]);
-        //     if (i < Ax_vec.size() - 1)
-        //     {
-        //         str3 += ' ';
-        //     }
-        // }
-        // PRINT("{}", str3);
-#endif
+        if (nrows < 20)
+        {
+            PRINT("Ap is:");
+            std::vector<uint64_t> Ap_vec(Ap, Ap + (Ap_size / sizeof(uint64_t)));
+            std::string str1;
+            for (size_t i = 0; i < Ap_vec.size(); ++i)
+            {
+                str1 += std::to_string(Ap_vec[i]);
+                if (i < Ap_vec.size() - 1)
+                {
+                    str1 += ' ';
+                }
+            }
+            PRINT("{}", str1);
+            PRINT("Aj is:");
+            std::vector<uint64_t> Aj_vec(Aj, Aj + (Aj_size / sizeof(uint64_t)));
+            std::string str2;
+            for (size_t i = 0; i < Aj_vec.size(); ++i)
+            {
+                str2 += std::to_string(Aj_vec[i]);
+                if (i < Aj_vec.size() - 1)
+                {
+                    str2 += ' ';
+                }
+            }
+            PRINT("{}", str2);
+            PRINT("Ax is:");
 
+            std::vector<int64_t> Ax_vec((int64_t *)Ax, (int64_t *)Ax + (Ax_size / sizeof(int64_t)));
+            std::string str3;
+            for (size_t i = 0; i < Ax_vec.size(); ++i)
+            {
+                str3 += std::to_string(Ax_vec[i]);
+                if (i < Ax_vec.size() - 1)
+                {
+                    str3 += ' ';
+                }
+            }
+            PRINT("{}", str3);
+        }
+
+#endif
+        std::cout << "[CUDA][LOG] iteration max = " << itermax << std::endl;
         // Call CUDA kernel
         std::cout << "Processing starts at: " << GetCurrentMilliseconds() << std::endl;
         cdlp_gpu(Ap, Ap_size, Aj, Aj_size, CDLP_handle, n, nnz, symmetric, itermax);
