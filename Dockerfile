@@ -23,3 +23,6 @@ WORKDIR /rai-submit
 
 # for image used in rai, I added datasets inside of it, so you don't need to copy datasets into the container
 # get image: docker pull zhongbozhu/ece508-cuda-graph-analytics-rai:rai-latest
+
+# re-init by yourself:
+# scripts/init-for-testing.sh /cuda-graph-analytics/example-data-sets/graphs /cuda-graph-analytics/example-data-sets/matrices 
