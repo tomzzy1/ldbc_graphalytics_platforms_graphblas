@@ -3,31 +3,31 @@
 #include <stdio.h>
 
 //  choose to open one
-#define optimized_local_bin_count 0             // use local bin count (bad)
-#define optimized_hash 0                        // use hash table for counting (good)
-#define optimized_hash_shared 0                 // use shared memory without dynamic parallel (bad)
-#define optimized_hash_dynamic 0                // use dynamic kernel launch together with hash table (bad)
-#define optimized_hash_dynamic_shared 1         // use shared memory for hash table (bad)
+#define optimized_local_bin_count 0     // use local bin count (bad)
+#define optimized_hash 0                // use hash table for counting (good)
+#define optimized_hash_shared 0         // use shared memory without dynamic parallel (bad)
+#define optimized_hash_dynamic 0        // use dynamic kernel launch together with hash table (bad)
+#define optimized_hash_dynamic_shared 1 // use shared memory for hash table (bad)
 
 // always open
 #define optimized_skip_checkequal 1 // skip the first few check equal, since the labels won't be equal in first few iterations
 
-#define GRID_DIM  64
-#define BLOCK_DIM  1024
-#define LOCAL_BIN_SIZE  16
-#define PARALLEL_KERNEL_THRESHOLD  1200
-#define STOP_DYNAMIC_KERNEL  5
-#define START_SHAREDMEM_DYNAMIC_KERNEL  5
-#define CHILD_BLOCK_DIM  32
-#define MAX_CHILD_BLOCK_DIM  64
+#define GRID_DIM 64
+#define BLOCK_DIM 1024
+#define LOCAL_BIN_SIZE 16
+#define PARALLEL_KERNEL_THRESHOLD 1200
+#define STOP_DYNAMIC_KERNEL 5
+#define START_SHAREDMEM_DYNAMIC_KERNEL 5
+#define CHILD_BLOCK_DIM 32
+#define MAX_CHILD_BLOCK_DIM 64
 
-#define MAX_HASH_ITEMS_IN_SHARED_DYNAMIC  512
-#define MIN_HASH_ITEMS_IN_SHARED_DYNAMIC  128
+#define MAX_HASH_ITEMS_IN_SHARED_DYNAMIC 512
+#define MIN_HASH_ITEMS_IN_SHARED_DYNAMIC 128
 
-#define GRID_DIM_HASH_SHARED  2048
-#define BLOCK_DIM_HASH_SHARED  1
-#define HASH_ITEMS_IN_SHARED_NCOL  256
-#define HASH_ITEMS_IN_SHARED_NROW  BLOCK_DIM_HASH_SHARED
+#define GRID_DIM_HASH_SHARED 2048
+#define BLOCK_DIM_HASH_SHARED 1
+#define HASH_ITEMS_IN_SHARED_NCOL 256
+#define HASH_ITEMS_IN_SHARED_NROW BLOCK_DIM_HASH_SHARED
 
 #define MIN(x, y) (x < y ? x : y)
 #define MAX(x, y) (x > y ? x : y)
@@ -40,10 +40,10 @@ typedef struct
 #if optimized_hash_dynamic || optimized_hash_dynamic_shared
     int mutex;
 #endif
-    int iter_count;   // version number
+    int iter_count; // version number
     // int relative_idx; // index number in the bin
-    GrB_Index label;  // key for hashing
-    GrB_Index count;  // value for hashing
+    GrB_Index label; // key for hashing
+    GrB_Index count; // value for hashing
 } hash_table_item;
 
 __host__ __device__ static inline int ceil_div(int x, int y)
@@ -65,7 +65,8 @@ __global__ void initialize_label(GrB_Index *labels, GrB_Index N)
     }
 }
 
-__device__ __forceinline__ float get_shared_mem_utilization(int size, int used){
+__device__ __forceinline__ float get_shared_mem_utilization(int size, int used)
+{
     return (float)used / size;
 }
 
@@ -332,7 +333,9 @@ __global__ void cdlp_optimized_local_bin_count(
 }
 #endif
 
+#define hash_func2 1
 
+#if !hash_func2
 // hash function for key = label and capacity = n
 __device__ __forceinline__ int hash_func(GrB_Index label, GrB_Index n)
 {
@@ -341,6 +344,21 @@ __device__ __forceinline__ int hash_func(GrB_Index label, GrB_Index n)
     hash %= n;
     return (int)hash;
 }
+#endif
+
+#if hash_func2
+__device__ __forceinline__ int hash_func(GrB_Index label, GrB_Index n)
+{
+    // use bit mixing, hopefully better
+    label ^= label >> 33;
+    label *= 0xff51afd7ed558ccd;
+    label ^= label >> 33;
+    label *= 0xc4ceb9fe1a85ec53;
+    label ^= label >> 33;
+    GrB_Index hash = label % n;
+    return (int)hash;
+}
+#endif
 
 // __device__ __forceinline__ GrB_Index hash_table_set_count(int iter, hash_table_item* htable, GrB_Index start, GrB_Index end, GrB_Index label, GrB_Index value)
 // {
@@ -376,7 +394,6 @@ __device__ __forceinline__ GrB_Index hash_table_inc_count(int iter, hash_table_i
     return gethtable(location).count;
 #undef gethtable
 }
-
 
 __global__ void cdlp_with_hashing(
     int iteration_count,   // Current iteration, start counting from 1 so that 0 means not yet used
@@ -436,7 +453,6 @@ __global__ void cdlp_with_hashing(
     }
 }
 
-
 #if optimized_hash_dynamic
 __device__ __forceinline__ GrB_Index hash_table_inc_count_atomic(int iter, hash_table_item *htable, GrB_Index start, GrB_Index end, GrB_Index label, GrB_Index delta)
 {
@@ -450,7 +466,8 @@ __device__ __forceinline__ GrB_Index hash_table_inc_count_atomic(int iter, hash_
     while (1)
     {
         lockslot(relative_idx);
-        if (gethtable(relative_idx).iter_count != iter){
+        if (gethtable(relative_idx).iter_count != iter)
+        {
             break;
         }
         // same iteration number, key already exist, add count
@@ -492,7 +509,8 @@ __global__ void cdlp_child(GrB_Index srcNode, GrB_Index neighbor_n, int iteratio
     // use int instead of GrB_Index to save resource, the count won't really exceed int anyway
     __shared__ unsigned long long shared_min_label;
     __shared__ unsigned long long shared_max_count;
-    if (ti == 0){
+    if (ti == 0)
+    {
         shared_min_label = (unsigned long long)-1;
         shared_max_count = (unsigned long long)0;
     }
@@ -526,11 +544,11 @@ __global__ void cdlp_child(GrB_Index srcNode, GrB_Index neighbor_n, int iteratio
         atomicMin(&shared_min_label, min_label);
     }
     __syncthreads();
-    if (ti == 0){
+    if (ti == 0)
+    {
         new_labels[srcNode] = shared_min_label;
     }
 }
-
 
 __global__ void cdlp_with_hashing_dynamic(
     int iteration_count,   // Current iteration, start counting from 1 so that 0 means not yet used
@@ -540,8 +558,8 @@ __global__ void cdlp_with_hashing_dynamic(
     GrB_Index *new_labels, // new labels after each iteration
     GrB_Index N,           // Number of nodes
     bool symmetric,        // Is the matrix symmetric (aka is the graph undirected)
-    hash_table_item *htable
-){
+    hash_table_item *htable)
+{
     GrB_Index ti = blockDim.x * blockIdx.x + threadIdx.x;
     // Iterate until converge or reaching maximum number
     // Loop through all nodes
@@ -604,21 +622,24 @@ __global__ void cdlp_with_hashing_dynamic(
 #if optimized_hash_dynamic_shared
 
 // return -1 on failure (maybe more that 75% full)
-__device__ __forceinline__ int inc_count_atomic_shared_htable(int iter, hash_table_item* shared_htable, int sharedmem_slots, int* shared_mem_usage_ptr, GrB_Index label, GrB_Index delta){
+__device__ __forceinline__ int inc_count_atomic_shared_htable(int iter, hash_table_item *shared_htable, int sharedmem_slots, int *shared_mem_usage_ptr, GrB_Index label, GrB_Index delta)
+{
 #define getsharedhtable(idx) shared_htable[idx]
 #define lockslot(idx) while (atomicCAS(&(getsharedhtable(idx).mutex), 0, 1) != 0)
 #define unlockslot(idx) atomicExch(&(getsharedhtable(idx).mutex), 0);
-// #define lockslot(idx) 
-// #define unlockslot(idx) 
+    // #define lockslot(idx)
+    // #define unlockslot(idx)
     int relative_idx = hash_func(label, (GrB_Index)sharedmem_slots);
     int location = -1;
     // linear probing
     while (1)
     {
         // lockslot(relative_idx);
-        if (getsharedhtable(relative_idx).iter_count != iter){
+        if (getsharedhtable(relative_idx).iter_count != iter)
+        {
             // find a free slot, check capacity then
-            if (get_shared_mem_utilization(atomicAdd(shared_mem_usage_ptr, 0), sharedmem_slots) > 0.75){
+            if (get_shared_mem_utilization(atomicAdd(shared_mem_usage_ptr, 0), sharedmem_slots) > 0.75)
+            {
                 unlockslot(relative_idx);
                 // printf("shared mem full\n");
                 return -1;
@@ -661,18 +682,19 @@ __device__ __forceinline__ int inc_count_atomic_shared_htable(int iter, hash_tab
 // if it's not, then check the capacity usage of shared mem, if it's not full, then insert it into shared mem
 // otherwise insert it to global mem
 // tradeoff: for every inc_count, whose label is in global mem, we have to check if it's inside shared mem first, then check if it's in global mem
-__device__ __forceinline__ GrB_Index hash_table_inc_count_atomic_sharedmem(int iter, hash_table_item *htable, hash_table_item *shared_htable, int sharedmem_size, int* shared_mem_usage_ptr, GrB_Index start, GrB_Index end, GrB_Index label, GrB_Index delta)
+__device__ __forceinline__ GrB_Index hash_table_inc_count_atomic_sharedmem(int iter, hash_table_item *htable, hash_table_item *shared_htable, int sharedmem_size, int *shared_mem_usage_ptr, GrB_Index start, GrB_Index end, GrB_Index label, GrB_Index delta)
 {
 #define gethtable(idx) htable[start + idx]
 #define lockslot(idx) while (atomicCAS(&(gethtable(idx).mutex), 0, 1) != 0)
 #define unlockslot(idx) atomicExch(&(gethtable(idx).mutex), 0);
-// #define lockslot(idx) 
-// #define unlockslot(idx) 
+    // #define lockslot(idx)
+    // #define unlockslot(idx)
     GrB_Index capacity = end - start + 1; // capacity should not overflow int32_t even though we use uint64_t, otherwise too large
     // try shared mem first
     int ret = -1;
-    ret = inc_count_atomic_shared_htable(iter, shared_htable, sharedmem_size/sizeof(hash_table_item), shared_mem_usage_ptr, label, delta);
-    if (ret >= 0){
+    ret = inc_count_atomic_shared_htable(iter, shared_htable, sharedmem_size / sizeof(hash_table_item), shared_mem_usage_ptr, label, delta);
+    if (ret >= 0)
+    {
         return ret;
     }
     int relative_idx = hash_func(label, capacity);
@@ -681,7 +703,8 @@ __device__ __forceinline__ GrB_Index hash_table_inc_count_atomic_sharedmem(int i
     while (1)
     {
         lockslot(relative_idx);
-        if (gethtable(relative_idx).iter_count != iter){
+        if (gethtable(relative_idx).iter_count != iter)
+        {
             break;
         }
         // same iteration number, key already exist, add count
@@ -727,19 +750,22 @@ __global__ void cdlp_child_sharedmem(GrB_Index srcNode, GrB_Index neighbor_n, in
     __shared__ unsigned long long shared_min_label;
     __shared__ unsigned long long shared_max_counts[CHILD_BLOCK_DIM];
     __shared__ int shared_htable_usage;
-    if (ti == 0){
+    if (ti == 0)
+    {
         shared_htable_usage = 0;
         shared_min_label = (unsigned long long)-1;
     }
     // clear shared mem
     int numslots = sharedmem_size / sizeof(hash_table_item);
-    for (int i = ti; i < numslots; i += blockDim.x){
+    for (int i = ti; i < numslots; i += blockDim.x)
+    {
         shared_htable[i].iter_count = 0;
         shared_htable[i].mutex = 0;
     }
     // clear shared min labels and max counts
     // shared mem size is CHILD_BLOCK_DIM, while the blockDim.x is a integer multiple of CHILD_BLOCK_DIM
-    if (ti < CHILD_BLOCK_DIM){
+    if (ti < CHILD_BLOCK_DIM)
+    {
         shared_max_counts[ti] = (unsigned long long)0;
     }
     __syncthreads();
@@ -753,7 +779,7 @@ __global__ void cdlp_child_sharedmem(GrB_Index srcNode, GrB_Index neighbor_n, in
         GrB_Index incr = 1;
 
         // 1.2 build hash table
-        GrB_Index new_count = hash_table_inc_count_atomic_sharedmem(iteration_count, htable, (hash_table_item*)shared_htable, sharedmem_size, &shared_htable_usage, segment_start, segment_end, label, incr);
+        GrB_Index new_count = hash_table_inc_count_atomic_sharedmem(iteration_count, htable, (hash_table_item *)shared_htable, sharedmem_size, &shared_htable_usage, segment_start, segment_end, label, incr);
 
         if (new_count > max_count)
         {
@@ -768,8 +794,10 @@ __global__ void cdlp_child_sharedmem(GrB_Index srcNode, GrB_Index neighbor_n, in
     atomicMax(&(shared_max_counts[ti / ratio]), max_count);
     __syncthreads();
     // reduction to get max count in position 0
-    for(int stride = 1; stride <= CHILD_BLOCK_DIM/2; stride *= 2){
-        if (ti < CHILD_BLOCK_DIM/2 && ti % stride == 0){
+    for (int stride = 1; stride <= CHILD_BLOCK_DIM / 2; stride *= 2)
+    {
+        if (ti < CHILD_BLOCK_DIM / 2 && ti % stride == 0)
+        {
             shared_max_counts[2 * ti] = MAX(shared_max_counts[2 * ti], shared_max_counts[2 * ti + stride]);
         }
         __syncthreads();
@@ -779,11 +807,11 @@ __global__ void cdlp_child_sharedmem(GrB_Index srcNode, GrB_Index neighbor_n, in
         atomicMin(&shared_min_label, min_label);
     }
     __syncthreads();
-    if (ti == 0){
+    if (ti == 0)
+    {
         new_labels[srcNode] = shared_min_label;
     }
 }
-
 
 __global__ void cdlp_with_hashing_dynamic_sharedmem(
     int iteration_count,   // Current iteration, start counting from 1 so that 0 means not yet used
@@ -793,8 +821,8 @@ __global__ void cdlp_with_hashing_dynamic_sharedmem(
     GrB_Index *new_labels, // new labels after each iteration
     GrB_Index N,           // Number of nodes
     bool symmetric,        // Is the matrix symmetric (aka is the graph undirected)
-    hash_table_item *htable
-){
+    hash_table_item *htable)
+{
     GrB_Index ti = blockDim.x * blockIdx.x + threadIdx.x;
     // Iterate until converge or reaching maximum number
     // Loop through all nodes
@@ -855,20 +883,22 @@ __global__ void cdlp_with_hashing_dynamic_sharedmem(
 }
 #endif
 
-
 #if optimized_hash_shared
 
 // return -1 on failure (maybe more that 75% full)
-__device__ __forceinline__ int inc_count_shared_htable(int iter, hash_table_item* shared_htable, int sharedmem_slots, int* shared_mem_usage_ptr, GrB_Index label, GrB_Index delta){
+__device__ __forceinline__ int inc_count_shared_htable(int iter, hash_table_item *shared_htable, int sharedmem_slots, int *shared_mem_usage_ptr, GrB_Index label, GrB_Index delta)
+{
 #define getsharedhtable(idx) shared_htable[idx]
     int relative_idx = hash_func(label, (GrB_Index)sharedmem_slots);
     int location = -1;
     // linear probing
     while (1)
     {
-        if (getsharedhtable(relative_idx).iter_count != iter){
+        if (getsharedhtable(relative_idx).iter_count != iter)
+        {
             // find a free slot, check capacity then
-            if (get_shared_mem_utilization(atomicAdd(shared_mem_usage_ptr, 0), sharedmem_slots) > 0.75){
+            if (get_shared_mem_utilization(atomicAdd(shared_mem_usage_ptr, 0), sharedmem_slots) > 0.75)
+            {
                 return -1;
             }
             break;
@@ -896,15 +926,15 @@ __device__ __forceinline__ int inc_count_shared_htable(int iter, hash_table_item
 #undef getsharedhtable
 }
 
-
-__device__ __forceinline__ GrB_Index hash_table_inc_count_sharedmem(int iter, hash_table_item *htable, hash_table_item *shared_htable, int sharedmem_size, int* shared_mem_usage_ptr, GrB_Index start, GrB_Index end, GrB_Index label, GrB_Index delta)
+__device__ __forceinline__ GrB_Index hash_table_inc_count_sharedmem(int iter, hash_table_item *htable, hash_table_item *shared_htable, int sharedmem_size, int *shared_mem_usage_ptr, GrB_Index start, GrB_Index end, GrB_Index label, GrB_Index delta)
 {
 #define gethtable(idx) htable[start + idx]
     GrB_Index capacity = end - start + 1; // capacity should not overflow int32_t even though we use uint64_t, otherwise too large
     // try shared mem first
     int ret = -1;
-    ret = inc_count_shared_htable(iter, shared_htable, sharedmem_size/sizeof(hash_table_item), shared_mem_usage_ptr, label, delta);
-    if (ret >= 0){
+    ret = inc_count_shared_htable(iter, shared_htable, sharedmem_size / sizeof(hash_table_item), shared_mem_usage_ptr, label, delta);
+    if (ret >= 0)
+    {
         return ret;
     }
     int relative_idx = hash_func(label, capacity);
@@ -912,7 +942,8 @@ __device__ __forceinline__ GrB_Index hash_table_inc_count_sharedmem(int iter, ha
     // linear probing
     while (1)
     {
-        if (gethtable(relative_idx).iter_count != iter){
+        if (gethtable(relative_idx).iter_count != iter)
+        {
             break;
         }
         // same iteration number, key already exist, add count
@@ -948,8 +979,8 @@ __global__ void cdlp_with_hashing_sharedmem(
     GrB_Index *new_labels, // new labels after each iteration
     GrB_Index N,           // Number of nodes
     bool symmetric,        // Is the matrix symmetric (aka is the graph undirected)
-    hash_table_item *htable
-){
+    hash_table_item *htable)
+{
     __shared__ hash_table_item shared_htable2D[HASH_ITEMS_IN_SHARED_NROW][HASH_ITEMS_IN_SHARED_NCOL];
     __shared__ int shared_mem_usages[HASH_ITEMS_IN_SHARED_NROW];
     GrB_Index ti = blockDim.x * blockIdx.x + threadIdx.x;
@@ -969,7 +1000,8 @@ __global__ void cdlp_with_hashing_sharedmem(
             int slots_to_clear = MAX(MIN(2 * neighbor_n, HASH_ITEMS_IN_SHARED_NCOL), 10);
             // 1.1 reset shared memory
             shared_mem_usages[threadIdx.x] = 0;
-            for (int col=0; col < slots_to_clear; col++){
+            for (int col = 0; col < slots_to_clear; col++)
+            {
                 shared_htable2D[threadIdx.x][col].iter_count = 0;
             }
             __syncthreads();
@@ -984,8 +1016,8 @@ __global__ void cdlp_with_hashing_sharedmem(
                 // 1.1 If is a directed graph
                 GrB_Index incr = 1;
 
-                GrB_Index new_count = hash_table_inc_count_sharedmem(iteration_count, htable, (hash_table_item*)shared_htable2D[threadIdx.x], \
-                                                                     sizeof(hash_table_item) * slots_to_clear, shared_mem_usages + threadIdx.x, segment_start, \
+                GrB_Index new_count = hash_table_inc_count_sharedmem(iteration_count, htable, (hash_table_item *)shared_htable2D[threadIdx.x],
+                                                                     sizeof(hash_table_item) * slots_to_clear, shared_mem_usages + threadIdx.x, segment_start,
                                                                      segment_end, label, incr);
                 if (new_count > max_count)
                 {
@@ -1005,7 +1037,6 @@ __global__ void cdlp_with_hashing_sharedmem(
                 // labels[srcNode] = min_label; // TODO: potential overflow
                 new_labels[srcNode] = min_label;
             }
-            
         }
         // __syncthreads();
     }
@@ -1022,7 +1053,7 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
     GrB_Index *labels;
     int is_equal = 1;
     int *is_equal_k;
-#if optimized_hash || optimized_hash_shared|| optimized_hash_dynamic || optimized_hash_dynamic_shared
+#if optimized_hash || optimized_hash_shared || optimized_hash_dynamic || optimized_hash_dynamic_shared
     hash_table_item *htable_k;
 #if DEBUG_PRINT
     hash_table_item *htable;
@@ -1047,11 +1078,11 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
     cudaMalloc((void **)&bin_label_k, nnz * sizeof(GrB_Index));
 #endif
 
-// #if optimized_hash_dynamic
-//     GrB_Index *max_counts_k;
-//     cudaMalloc((void **)&max_counts_k, N * sizeof(GrB_Index));
-//     cudaMemset(max_counts_k, 0, N * sizeof(GrB_Index));
-// #endif
+    // #if optimized_hash_dynamic
+    //     GrB_Index *max_counts_k;
+    //     cudaMalloc((void **)&max_counts_k, N * sizeof(GrB_Index));
+    //     cudaMemset(max_counts_k, 0, N * sizeof(GrB_Index));
+    // #endif
 
 #if DEBUG_PRINT != 0
     // PRINT("FINISH CUDA MALLOC");
@@ -1079,7 +1110,7 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
 #if optimized_hash_shared
     dim3 DimGrid(GRID_DIM_HASH_SHARED, 1, 1);
     dim3 DimBlock(BLOCK_DIM_HASH_SHARED, 1);
-#else 
+#else
     dim3 DimGrid(GRID_DIM, 1, 1);
     dim3 DimBlock(BLOCK_DIM, 1, 1);
 #endif
@@ -1110,9 +1141,12 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
 #endif
 
 #if optimized_skip_checkequal
-        if (i < MIN(itermax, 5)){
+        if (i < MIN(itermax, 5))
+        {
             is_equal = 0;
-        }else{
+        }
+        else
+        {
             cudaMemset(is_equal_k, 1, sizeof(int));
             check_equality<<<DimGrid, DimBlock>>>(labels_k, new_labels_k, N, is_equal_k);
             // cudaDeviceSynchronize();
@@ -1124,9 +1158,12 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
         // cudaDeviceSynchronize();
         cudaMemcpy(&is_equal, is_equal_k, sizeof(int), cudaMemcpyDeviceToHost);
 #endif
-        if (is_equal){
+        if (is_equal)
+        {
             break;
-        }else{
+        }
+        else
+        {
             // cudaMemcpy(labels_k, new_labels_k, N * sizeof(GrB_Index), cudaMemcpyDeviceToDevice);
             //  optimization: double buffering, avoid memcpy
             std::swap(labels_k, new_labels_k);
@@ -1154,10 +1191,10 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
             }
 #endif
 
-// #if optimized_hash_dynamic
-//             // cudaMemset(max_counts_k, 0, N * sizeof(GrB_Index));
-//             // cudaMemset(htable_k, 0, HASH_TABLE_SIZE_FACTOR * nnz * sizeof(hash_table_item));
-// #endif
+            // #if optimized_hash_dynamic
+            //             // cudaMemset(max_counts_k, 0, N * sizeof(GrB_Index));
+            //             // cudaMemset(htable_k, 0, HASH_TABLE_SIZE_FACTOR * nnz * sizeof(hash_table_item));
+            // #endif
         }
         timer_stop();
     }
@@ -1189,9 +1226,9 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
 #if optimized_local_bin_count
     cudaFree(bin_index);
 #endif
-// #if optimized_hash_dynamic
-//     cudaFree(max_counts_k);
-// #endif
+    // #if optimized_hash_dynamic
+    //     cudaFree(max_counts_k);
+    // #endif
 
 #if DEBUG_PRINT != 0
     // PRINT("CONVERT TO GRB_VECTOR");
