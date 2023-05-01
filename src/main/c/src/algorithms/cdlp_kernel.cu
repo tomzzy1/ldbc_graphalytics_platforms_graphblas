@@ -5,12 +5,16 @@
 //  choose to open one
 #define optimized_local_bin_count 0     // use local bin count (bad)
 #define optimized_hash 0                // use hash table for counting (good)
-#define optimized_hash_shared 0         // use shared memory without dynamic parallel (bad)
+#define optimized_hash_shared 1         // use shared memory without dynamic parallel (bad)
 #define optimized_hash_dynamic 0        // use dynamic kernel launch together with hash table (bad)
-#define optimized_hash_dynamic_shared 1 // use shared memory for hash table (bad)
+#define optimized_hash_dynamic_shared 0 // use shared memory for hash table (bad)
 
 // always open
 #define optimized_skip_checkequal 1 // skip the first few check equal, since the labels won't be equal in first few iterations
+
+#define optimized_first_iter 1
+
+#define break_early 1
 
 #define GRID_DIM 64
 #define BLOCK_DIM 1024
@@ -52,6 +56,7 @@ __host__ __device__ static inline int ceil_div(int x, int y)
 }
 
 // initialize labels for CDLP
+#if !optimized_first_iter
 __global__ void initialize_label(GrB_Index *labels, GrB_Index N)
 {
     int x = blockDim.x * blockIdx.x + threadIdx.x;
@@ -64,6 +69,45 @@ __global__ void initialize_label(GrB_Index *labels, GrB_Index N)
         }
     }
 }
+#endif
+
+#if optimized_first_iter
+__global__ void initialize_label(
+    GrB_Index *Ap,
+    GrB_Index *Aj,
+    GrB_Index *labels,
+    GrB_Index N,
+    bool symmetric)
+{
+    GrB_Index ti = blockDim.x * blockIdx.x + threadIdx.x;
+    // Iterate until converge or reaching maximum number
+    // Loop through all nodes
+    GrB_Index stride = gridDim.x * blockDim.x;
+    for (GrB_Index srcNode = ti; srcNode < N; srcNode += stride)
+    {
+        if (srcNode < N)
+        {
+            // 1. Count neighbors' labels
+            GrB_Index j_base = Ap[srcNode];
+            GrB_Index j_max = Ap[srcNode + 1];
+            for (GrB_Index j = j_base; j < j_max; j++)
+            {
+                GrB_Index min_label = (GrB_Index)-1;
+                for (GrB_Index j = j_base; j < j_max; j++)
+                {
+                    min_label = min(Aj[j], min_label);
+                }
+
+                // 3. Update label
+                if (min_label != (GrB_Index)-1)
+                {
+                    labels[srcNode] = min_label;
+                }
+            }
+        }
+    }
+}
+#endif
 
 __device__ __forceinline__ float get_shared_mem_utilization(int size, int used)
 {
@@ -418,7 +462,7 @@ __global__ void cdlp_with_hashing(
             GrB_Index j_max = Ap[srcNode + 1];
             GrB_Index max_count = (GrB_Index)0;
             GrB_Index min_label = (GrB_Index)-1;
-
+            GrB_Index half_neighbor_n = (j_max - j_base) / 2;
             for (GrB_Index j = j_base; j < j_max; j++)
             {
                 GrB_Index desNode = Aj[j];
@@ -431,6 +475,13 @@ __global__ void cdlp_with_hashing(
                 int segment_start = j_base * HASH_TABLE_SIZE_FACTOR;
                 int segment_end = j_max * HASH_TABLE_SIZE_FACTOR - 1; // inclusive index
                 GrB_Index new_count = hash_table_inc_count(iteration_count, htable, segment_start, segment_end, label, incr);
+                #if break_early
+                if (new_count > half_neighbor_n)
+                {
+                    min_label = label;
+                    break;
+                }
+                #endif
                 if (new_count > max_count)
                 {
                     max_count = new_count;
@@ -843,7 +894,7 @@ __global__ void cdlp_with_hashing_dynamic_sharedmem(
                 int blocksize_dynamic = MIN(ceil_div(neighbor_n, PARALLEL_KERNEL_THRESHOLD) * CHILD_BLOCK_DIM, MAX_CHILD_BLOCK_DIM);
                 int sharedmem_size = MIN(ceil_div(neighbor_n, PARALLEL_KERNEL_THRESHOLD) * MIN_HASH_ITEMS_IN_SHARED_DYNAMIC, MAX_HASH_ITEMS_IN_SHARED_DYNAMIC) * sizeof(hash_table_item);
                 cdlp_child_sharedmem<<<1, blocksize_dynamic, sharedmem_size>>>(srcNode, neighbor_n, iteration_count, Aj, labels, new_labels, j_base, j_max, htable, sharedmem_size);
-                cudaDeviceSynchronize();
+                //cudaDeviceSynchronize();
             }
             else
             {
@@ -1115,10 +1166,18 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
     dim3 DimBlock(BLOCK_DIM, 1, 1);
 #endif
 
+#if optimized_first_iter
+    initialize_label<<<DimGrid, DimBlock>>>(Ap_k, Aj_k, labels_k, N, symmetric);
+#else
     initialize_label<<<DimGrid, DimBlock>>>(labels_k, N);
+#endif
 
     // timer_start("CDLP_GPU MAIN LOOP USING CUDA KERNEL");
+#if optimized_first_iter
+    for (int i = 0; i < itermax - 1; ++i)
+#else
     for (int i = 0; i < itermax; ++i)
+#endif
     {
         timer_start("CDLP_GPU ITERATION " + std::to_string(i));
         // PRINT("RUNNING ITERATION {}", i);
