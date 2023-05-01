@@ -1,12 +1,13 @@
 #include "cdlp_kernel.cuh"
 #include <iostream>
+#include <stdio.h>
 
 //  choose to open one
 #define optimized_local_bin_count 0             // use local bin count (bad)
 #define optimized_hash 0                        // use hash table for counting (good)
-#define optimized_hash_shared 1                 // use shared memory without dynamic parallel (bad)
+#define optimized_hash_shared 0                 // use shared memory without dynamic parallel (bad)
 #define optimized_hash_dynamic 0                // use dynamic kernel launch together with hash table (bad)
-#define optimized_hash_dynamic_shared 0         // use shared memory for hash table (bad)
+#define optimized_hash_dynamic_shared 1         // use shared memory for hash table (bad)
 
 // always open
 #define optimized_skip_checkequal 1 // skip the first few check equal, since the labels won't be equal in first few iterations
@@ -15,12 +16,12 @@
 #define BLOCK_DIM  1024
 #define LOCAL_BIN_SIZE  16
 #define PARALLEL_KERNEL_THRESHOLD  1200
-#define STOP_PARALLEL_KERNEL_ITERATIONS  5
-#define START_PARALLEL_KERNEL_ITERATIONS  3
-#define CHILD_BLOCK_DIM  64
-#define MAX_CHILD_BLOCK_DIM  512
+#define STOP_DYNAMIC_KERNEL  5
+#define START_SHAREDMEM_DYNAMIC_KERNEL  5
+#define CHILD_BLOCK_DIM  32
+#define MAX_CHILD_BLOCK_DIM  64
 
-#define MAX_HASH_ITEMS_IN_SHARED_DYNAMIC  1024
+#define MAX_HASH_ITEMS_IN_SHARED_DYNAMIC  512
 #define MIN_HASH_ITEMS_IN_SHARED_DYNAMIC  128
 
 #define GRID_DIM_HASH_SHARED  2048
@@ -555,7 +556,7 @@ __global__ void cdlp_with_hashing_dynamic(
             GrB_Index max_count = (GrB_Index)0;
             GrB_Index min_label = (GrB_Index)-1;
             GrB_Index neighbor_n = j_max - j_base;
-            if (neighbor_n > PARALLEL_KERNEL_THRESHOLD && iteration_count < STOP_PARALLEL_KERNEL_ITERATIONS)
+            if (neighbor_n > PARALLEL_KERNEL_THRESHOLD && iteration_count < STOP_DYNAMIC_KERNEL)
             {
                 new_labels[srcNode] = (GrB_Index)-1;
                 int blocksize_dynamic = ceil_div(neighbor_n, PARALLEL_KERNEL_THRESHOLD) * CHILD_BLOCK_DIM;
@@ -607,16 +608,19 @@ __device__ __forceinline__ int inc_count_atomic_shared_htable(int iter, hash_tab
 #define getsharedhtable(idx) shared_htable[idx]
 #define lockslot(idx) while (atomicCAS(&(getsharedhtable(idx).mutex), 0, 1) != 0)
 #define unlockslot(idx) atomicExch(&(getsharedhtable(idx).mutex), 0);
+// #define lockslot(idx) 
+// #define unlockslot(idx) 
     int relative_idx = hash_func(label, (GrB_Index)sharedmem_slots);
     int location = -1;
     // linear probing
     while (1)
     {
-        lockslot(relative_idx);
+        // lockslot(relative_idx);
         if (getsharedhtable(relative_idx).iter_count != iter){
             // find a free slot, check capacity then
             if (get_shared_mem_utilization(atomicAdd(shared_mem_usage_ptr, 0), sharedmem_slots) > 0.75){
                 unlockslot(relative_idx);
+                // printf("shared mem full\n");
                 return -1;
             }
             break;
@@ -628,7 +632,6 @@ __device__ __forceinline__ int inc_count_atomic_shared_htable(int iter, hash_tab
             getsharedhtable(relative_idx).count += delta;
             auto ret = getsharedhtable(relative_idx).count;
             unlockslot(relative_idx);
-            // return gethtable(relative_idx).count;
             return ret;
         }
         unlockslot(relative_idx);
@@ -663,6 +666,8 @@ __device__ __forceinline__ GrB_Index hash_table_inc_count_atomic_sharedmem(int i
 #define gethtable(idx) htable[start + idx]
 #define lockslot(idx) while (atomicCAS(&(gethtable(idx).mutex), 0, 1) != 0)
 #define unlockslot(idx) atomicExch(&(gethtable(idx).mutex), 0);
+// #define lockslot(idx) 
+// #define unlockslot(idx) 
     GrB_Index capacity = end - start + 1; // capacity should not overflow int32_t even though we use uint64_t, otherwise too large
     // try shared mem first
     int ret = -1;
@@ -718,19 +723,24 @@ __global__ void cdlp_child_sharedmem(GrB_Index srcNode, GrB_Index neighbor_n, in
     int segment_start = j_base * HASH_TABLE_SIZE_FACTOR;
     int segment_end = j_max * HASH_TABLE_SIZE_FACTOR - 1; // inclusive index
     // use int instead of GrB_Index to save resource, the count won't really exceed int anyway
+    int ratio = blockDim.x / CHILD_BLOCK_DIM;
     __shared__ unsigned long long shared_min_label;
-    __shared__ unsigned long long shared_max_count;
+    __shared__ unsigned long long shared_max_counts[CHILD_BLOCK_DIM];
     __shared__ int shared_htable_usage;
     if (ti == 0){
-        shared_min_label = (unsigned long long)-1;
-        shared_max_count = (unsigned long long)0;
         shared_htable_usage = 0;
+        shared_min_label = (unsigned long long)-1;
     }
     // clear shared mem
     int numslots = sharedmem_size / sizeof(hash_table_item);
     for (int i = ti; i < numslots; i += blockDim.x){
         shared_htable[i].iter_count = 0;
         shared_htable[i].mutex = 0;
+    }
+    // clear shared min labels and max counts
+    // shared mem size is CHILD_BLOCK_DIM, while the blockDim.x is a integer multiple of CHILD_BLOCK_DIM
+    if (ti < CHILD_BLOCK_DIM){
+        shared_max_counts[ti] = (unsigned long long)0;
     }
     __syncthreads();
     // start to update max count
@@ -755,9 +765,16 @@ __global__ void cdlp_child_sharedmem(GrB_Index srcNode, GrB_Index neighbor_n, in
             min_label = label;
         }
     }
-    atomicMax(&shared_max_count, max_count);
+    atomicMax(&(shared_max_counts[ti / ratio]), max_count);
     __syncthreads();
-    if (max_count == shared_max_count)
+    // reduction to get max count in position 0
+    for(int stride = 1; stride <= CHILD_BLOCK_DIM/2; stride *= 2){
+        if (ti < CHILD_BLOCK_DIM/2 && ti % stride == 0){
+            shared_max_counts[2 * ti] = MAX(shared_max_counts[2 * ti], shared_max_counts[2 * ti + stride]);
+        }
+        __syncthreads();
+    }
+    if (max_count == shared_max_counts[0])
     {
         atomicMin(&shared_min_label, min_label);
     }
@@ -792,7 +809,7 @@ __global__ void cdlp_with_hashing_dynamic_sharedmem(
             GrB_Index max_count = (GrB_Index)0;
             GrB_Index min_label = (GrB_Index)-1;
             GrB_Index neighbor_n = j_max - j_base;
-            if (neighbor_n > PARALLEL_KERNEL_THRESHOLD && iteration_count > START_PARALLEL_KERNEL_ITERATIONS)
+            if (neighbor_n > PARALLEL_KERNEL_THRESHOLD && iteration_count > START_SHAREDMEM_DYNAMIC_KERNEL)
             {
                 new_labels[srcNode] = (GrB_Index)-1;
                 int blocksize_dynamic = MIN(ceil_div(neighbor_n, PARALLEL_KERNEL_THRESHOLD) * CHILD_BLOCK_DIM, MAX_CHILD_BLOCK_DIM);
