@@ -1,7 +1,7 @@
 # lab: LDBC-COMMUNITY-DETECTION
 rai:
   version: 0.2
-  image: zhongbozhu/ece508-cuda-graph-analytics-rai:rai_small_datagen_v1
+  image: zhongbozhu/ece508-cuda-graph-analytics-rai:rai_small_datagen_v2
 resources:
   cpu:
     architecture: amd64

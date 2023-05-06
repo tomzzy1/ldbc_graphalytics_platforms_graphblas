@@ -32,7 +32,7 @@
 #define HASH_ITEMS_IN_SHARED_NCOL 256
 #define HASH_ITEMS_IN_SHARED_NROW BLOCK_DIM_X_HASH_SHARED
 
-#define STOP_HASH_SHARED_KERNEL 3
+#define STOP_HASH_SHARED_KERNEL 4
 
 #define MIN(x, y) (x < y ? x : y)
 #define MAX(x, y) (x > y ? x : y)
