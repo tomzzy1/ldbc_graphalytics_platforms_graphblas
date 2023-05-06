@@ -2,7 +2,7 @@ FROM zhongbozhu/ece508-cuda-graph-analytics:latest
 LABEL maintainer=zhongbo2@illinois.edu
 
 COPY ./rai /usr/bin
-RUN apt-get update && apt-get install -y --no-install-recommends vim git 
+RUN apt-get update && apt-get install -y --no-install-recommends vim git zstd
 RUN mkdir /rai-submit
 
 RUN cd /cuda-graph-analytics/ldbc_graphalytics && mvn install && \
@@ -10,8 +10,11 @@ RUN cd /cuda-graph-analytics/ldbc_graphalytics && mvn install && \
     /bin/bash scripts/init.sh /cuda-graph-analytics/example-data-sets/graphs /cuda-graph-analytics/example-data-sets/matrices 
 
 # copy datasets into the image for rai
-COPY small-data-sets/graphs/cit-Patents.e small-data-sets/graphs/cit-Patents.v small-data-sets/graphs/cit-Patents.properties small-data-sets/graphs/cit-Patents-CDLP /cuda-graph-analytics/example-data-sets/graphs/
 COPY small-data-sets/graphs/datagen-7_5-fb.v small-data-sets/graphs/datagen-7_5-fb.e small-data-sets/graphs/datagen-7_5-fb.properties small-data-sets/graphs/datagen-7_5-fb-CDLP /cuda-graph-analytics/example-data-sets/graphs/
+COPY small-data-sets/graphs/datagen-7_6-fb.v small-data-sets/graphs/datagen-7_6-fb.e small-data-sets/graphs/datagen-7_6-fb.properties small-data-sets/graphs/datagen-7_6-fb-CDLP /cuda-graph-analytics/example-data-sets/graphs/
+COPY small-data-sets/graphs/datagen-7_7-zf.v small-data-sets/graphs/datagen-7_7-zf.e small-data-sets/graphs/datagen-7_7-zf.properties small-data-sets/graphs/datagen-7_7-zf-CDLP /cuda-graph-analytics/example-data-sets/graphs/
+COPY small-data-sets/graphs/datagen-7_8-zf.v small-data-sets/graphs/datagen-7_8-zf.e small-data-sets/graphs/datagen-7_8-zf.properties small-data-sets/graphs/datagen-7_8-zf-CDLP /cuda-graph-analytics/example-data-sets/graphs/
+COPY small-data-sets/graphs/datagen-7_9-fb.v small-data-sets/graphs/datagen-7_9-fb.e small-data-sets/graphs/datagen-7_9-fb.properties small-data-sets/graphs/datagen-7_9-fb-CDLP /cuda-graph-analytics/example-data-sets/graphs/
 
 WORKDIR /rai-submit
 

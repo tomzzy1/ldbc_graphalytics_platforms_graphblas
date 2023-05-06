@@ -5,9 +5,9 @@
 //  choose to open one
 #define optimized_local_bin_count 0     // use local bin count (bad)
 #define optimized_hash 0                // use hash table for counting (good)
-#define optimized_hash_shared 0         // use shared memory without dynamic parallel (good for first few iterations)
+#define optimized_hash_shared 1         // use shared memory without dynamic parallel (good for first few iterations)
 #define optimized_hash_dynamic 0        // use dynamic kernel launch together with hash table (bad)
-#define optimized_hash_dynamic_shared 1 // use shared memory for hash table (bad)
+#define optimized_hash_dynamic_shared 0 // use shared memory for hash table (bad)
 
 // always open
 #define optimized_skip_checkequal 1     // skip the first few check equal, since the labels won't be equal in first few iterations
@@ -32,7 +32,7 @@
 #define HASH_ITEMS_IN_SHARED_NCOL 256
 #define HASH_ITEMS_IN_SHARED_NROW BLOCK_DIM_X_HASH_SHARED
 
-#define STOP_HASH_SHARED_KERNEL 2
+#define STOP_HASH_SHARED_KERNEL 3
 
 #define MIN(x, y) (x < y ? x : y)
 #define MAX(x, y) (x > y ? x : y)
