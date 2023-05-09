@@ -1224,12 +1224,12 @@ __host__ void cdlp_gpu(GrB_Index *Ap, GrB_Index Ap_size, GrB_Index *Aj, GrB_Inde
 #if DEBUG_PRINT != 0
         std::cout << "RUNNING ITERATION " << i << std::endl;
 #endif
-
-        if (i==0 && optimized_first_iter){
+#if optimized_first_iter
+        if (i==0){
             cdlp_first_iteration_findmin<<<DimGrid, DimBlock>>>(Ap_k, Aj_k, labels_k, new_labels_k, N, symmetric);
             first_iter_optimized = 1;
         }
-
+#endif
         if (!first_iter_optimized){
 #if optimized_local_bin_count
             cdlp_optimized_local_bin_count<<<DimGrid, DimBlock>>>(Ap_k, Aj_k, labels_k, new_labels_k, N, symmetric, bin_count_k, bin_label_k, bin_index);
